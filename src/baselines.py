@@ -22,9 +22,10 @@ Placeholders for later (§6.2, §6.3):
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from src.battery import BatterySpec
+from src.battery import BatterySpec, BatterySimulator
 
 
 def daily_oracle_schedule(
@@ -101,3 +102,68 @@ def daily_oracle_schedule(
             remaining -= take
 
     return schedule
+
+
+def _simulate_day_net_revenue(
+    schedule: pd.Series,
+    prices: pd.Series,
+    spec: BatterySpec,
+    interval_hours: float,
+    initial_soc_mwh: float,
+) -> float:
+    """Simulate a single-day schedule against realized prices and return net
+    revenue. Used by gated variants to check ex-post profitability."""
+    sim = BatterySimulator(spec)
+    sim._soc_mwh = initial_soc_mwh  # type: ignore[attr-defined]
+    total = 0.0
+    for ts, p in schedule.items():
+        step = sim.step(float(p), interval_hours, float(prices.loc[ts]))
+        total += step.net_revenue
+    return total
+
+
+def daily_spread_gated_schedule(
+    decision_prices: pd.Series,
+    execution_prices: pd.Series,
+    spec: BatterySpec,
+    interval_hours: float,
+    cycles_per_day: float = 1.0,
+    tz: str | None = None,
+) -> pd.Series:
+    """Build a natural-spread schedule from `decision_prices`, then skip any
+    day whose simulated net revenue (using `execution_prices`) is <= 0.
+
+    With `decision_prices = execution_prices`, this is a *realized-prices*
+    gate — removes the days where the baseline loses money to efficiency /
+    degradation (METHODOLOGY §5.2, FINDINGS 2026-04-24: this is the simple
+    improvement that closes much of the floor-to-ceiling gap).
+
+    With `decision_prices = some_forecast`, this is a *forecast-driven*
+    gate — the operator abstains when the forecast spread doesn't cover costs,
+    even if realized prices would have been profitable.
+
+    Note: this uses a fresh BatterySimulator per day starting at
+    `spec.initial_soc_frac` — day-level checks only. Carry-over is handled
+    by `run_dispatch` downstream.
+    """
+    base = daily_oracle_schedule(
+        decision_prices, spec, interval_hours, cycles_per_day=cycles_per_day, tz=tz
+    )
+
+    local_index = execution_prices.index.tz_convert(tz) if tz else execution_prices.index
+    day_key = pd.Series(local_index.date, index=execution_prices.index)
+
+    initial_soc_mwh = spec.initial_soc_frac * spec.capacity_mwh
+    gated = base.copy()
+
+    for _, idx in execution_prices.groupby(day_key).groups.items():
+        day_sched = base.loc[idx]
+        if (day_sched == 0).all():
+            continue
+        net = _simulate_day_net_revenue(
+            day_sched, execution_prices.loc[idx], spec, interval_hours, initial_soc_mwh
+        )
+        if net <= 0:
+            gated.loc[idx] = 0.0
+
+    return gated

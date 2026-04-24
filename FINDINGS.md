@@ -43,6 +43,93 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — forecast-driven baselines and gated floor, HB_NORTH 2011–2024
+
+**Config:** default battery (100 MW / 200 MWh / η=0.85 / \$2/MWh deg),
+1 cycle/day, `tz=US/Central`. Script: `scripts/run_baselines_real.py`.
+
+**Data:** same — HB_NORTH RTM SPP, 2011–2024, 490,943 intervals, 5,114 days.
+
+**What:** added three strategies and ran the full comparison against the
+ceiling:
+- **Gated natural-spread** — same as floor but skips days whose simulated
+  net revenue (from initial SOC state, using realized prices) is ≤ 0.
+- **Persistence forecast** — Forecast(t) = Price(t − 1 day); applied to
+  the threshold-rule dispatch.
+- **Seasonal-naive forecast** — Forecast(t) = median of Price(t − 7·k days)
+  for k = 1..4; applied to the threshold-rule dispatch.
+
+**How:** all five strategies use the same 1-cycle-per-day budget and the
+same execution simulator. Forecast-driven strategies build the schedule
+from forecast, then execute on realized prices. No fitting, no train/test
+split needed — all forecasts are strictly backward-looking.
+
+**Headline: % of ceiling captured:**
+
+| Rank | Strategy                      | Revenue    | % ceiling | Lift over floor |
+|------|-------------------------------|------------|-----------|-----------------|
+| 1    | perfect_foresight_ceiling     | \$81.31M   | 100.0%    | +\$8.10M        |
+| 2    | natural_spread_gated (oracle) | \$73.58M   | 90.5%     | +\$0.37M        |
+| 3    | natural_spread_floor          | \$73.22M   | 90.0%     | 0               |
+| 4    | seasonal_naive_4w             | \$34.56M   | 42.5%     | **−\$38.65M**   |
+| 5    | persistence                   | \$32.26M   | 39.7%     | **−\$40.95M**   |
+
+**Key findings:**
+
+1. **Forecast-driven strategies with naive forecasts LOSE money vs the
+   floor.** Persistence does −\$40.95M over 14 years; seasonal-naive
+   −\$38.65M. Capturing yesterday's shape and betting on it is a net
+   value destroyer in ERCOT RTM. The reason: ERCOT's intraday price
+   shape shifts a lot day-to-day — heat events, wind ramps, and
+   scarcity patterns don't repeat on a 24h clock.
+
+2. **The gate is nearly free money but the size is small.** Gated floor
+   improves over floor by only \$365k over 14 years (+0.5% of ceiling).
+   Most bad days in ERCOT are *scarcity-or-negative* days where cycling
+   is still worth it; the gate only helps on truly flat, low-price days
+   which are rare in ERCOT.
+
+3. **Forecast-driven worst-day: −\$1.76M.** Compare to gated floor's
+   −\$316k. A bad forecast aimed at the wrong intervals on a volatile
+   day compounds into a large directional loss. Any ML model must be
+   evaluated for *tail behavior*, not just mean performance.
+
+4. **Regime concentration holds across strategies.** Scarcity days
+   supply 66-72% of revenue for every strategy. Forecast-driven
+   strategies earn a slightly higher *share* from scarcity (~72%)
+   precisely because their normal-day performance is worse — the
+   denominator is smaller, not the numerator bigger. They capture
+   ~44% of the *dollar amount* of ceiling scarcity revenue, vs floor's
+   91%.
+
+5. **The ML bar is clear.** An ML model earns its place only if its
+   forecast-driven dispatch revenue exceeds the natural-spread floor.
+   Beating persistence is trivial; beating the floor is the real test.
+   This is a much harder bar than "low MAE" — a model can have
+   respectable MAE and still lose to the floor because its errors are
+   correlated with intraday timing.
+
+**What broke / what surprised me:**
+- Persistence and seasonal-naive perform similarly (~40-43%), despite
+  the latter using 4x more history. The "use same DOW" assumption
+  doesn't add much over "use yesterday" in ERCOT's noisy environment.
+- Scarcity days: floor captures \$48.3M on them, forecast-driven only
+  \$23.2M (persistence) / \$23.9M (seasonal-naive). Naive forecasters
+  miss scarcity events half the time. The alpha opportunity for ML is
+  specifically *predicting tail events*, which is exactly what our
+  ML models will need to focus on.
+
+**Next:**
+1. Walk-forward evaluation harness (so we can fit models on train data,
+   forecast on hold-out, roll monthly).
+2. First fitted baseline: LightGBM with lag + calendar features, scored
+   against the floor — if it can't beat the natural-spread floor on
+   validation, we learn something important early.
+3. Probabilistic forecasts + a skill-weighted dispatch gate that uses
+   forecast uncertainty to decide when to cycle.
+
+---
+
 ### 2026-04-24 — perfect-foresight LP ceiling, HB_NORTH 2011–2024
 
 **Config:** default battery (100 MW / 200 MWh / η=0.85 / $2/MWh deg), 1 cycle/day,
