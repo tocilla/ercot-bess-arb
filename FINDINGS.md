@@ -43,6 +43,95 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — Combined strategy (q50 + load + scarcity-prob feature + gate)
+
+**Config:** two-stage walk-forward.
+- Stage 1: walk-forward LGBM scarcity classifier over the full history
+  (monthly refits, 4,382 days), producing one out-of-sample scarcity
+  probability per local date.
+- Stage 2: walk-forward q50 LightGBM point forecaster with 21 features
+  — 15 from prices + calendar, 5 from load, 1 is `scarcity_prob_today`
+  (broadcast from the daily stage-1 probs).
+- Dispatch: forecast-gate (skip days whose forecast simulates to ≤ 0).
+
+Script: `scripts/run_combined.py`. Validation window: 791 days.
+
+**Results (val):**
+
+| Strategy                              | Revenue    | % ceiling | Sharpe | Worst day   |
+|---------------------------------------|------------|-----------|--------|-------------|
+| ceiling                               | \$19.27M   | 100.0%    | 0.27   | \$0         |
+| floor                                 | \$16.77M   | 87.0%     | 0.21   | −\$830,710  |
+| q50 + gate (previous best, no scarcity feature) | \$10.28M | **53.3%** | 0.34 | −\$8,991 |
+| **combined: q50 + load + scarcity-prob feature + gate** | \$10.12M | 52.5% | 0.34 | −\$9,296 |
+| combined: q50 + load + scarcity-prob feature (no gate) | \$7.68M | 39.8% | 0.11 | −\$1.39M |
+
+Point forecast quality of the combined model:
+- MAE: **\$63.52** (worse than \$58.53 without scarcity_prob feature)
+- RMSE: \$637.93 (worse than \$619.30)
+
+**What this negative stacking result tells us:**
+
+1. **Stacking didn't stack.** Adding the scarcity probability as a
+   per-day broadcast feature slightly degraded both point forecast
+   accuracy *and* dispatch revenue. Going from 53.3% → 52.5% of
+   ceiling on gated is inside the noise, but the fact that it didn't
+   *improve* is the finding.
+
+2. **Why plausibly:** the scarcity probability is (a) noisy, particularly
+   in early years when the classifier's training set is small, and (b)
+   constant across all 96 intervals within a day, which is an awkward
+   signal for a 15-min forecaster. The model does not gain intraday
+   timing information from a constant daily feature, only level info
+   — and that level signal is already present in the lag/rolling price
+   features.
+
+3. **The session-best technique remains the forecast-gate alone.** The
+   dispatch layer is doing most of the interesting work:
+   - It prevents tail losses (−\$9k vs −\$1.36M worst day, 100× better).
+   - It roughly doubles Sharpe (0.34 vs 0.18).
+   - And it does this with *any* reasonable point forecaster — L1 LGBM,
+     q50 LGBM, with or without load, with or without scarcity feature.
+
+4. **The natural-spread floor is a stubborn ceiling for all ML
+   variants tested.** Six distinct ML variants (prices-only, prices+load,
+   scarcity-rule, scarcity-oracle-rule, q50 bare, q50+gate, combined)
+   range from 23.6% to 53.3% of the perfect-foresight ceiling, all below
+   the 87% captured by a mechanical oracle that cheats by knowing
+   realized prices. **No ML variant beat the floor on validation.**
+
+5. **The remaining gap is structural, not algorithmic.** With only
+   historical prices + lagged load, the forecaster cannot distinguish
+   a normal summer day from a day where a thermal unit will trip at
+   14:32 and prices will spike to \$5,000 by 15:00. Closing the gap
+   requires real-time exogenous information — short-term load forecasts
+   with hourly vintage, wind/solar production forecasts, system
+   operating reserves, temperature forecasts — which aren't available
+   as historical archives via gridstatus.
+
+**Overall session honest takeaway:**
+
+- The *mechanical* natural-spread floor at 87% of ceiling is a very
+  strong baseline for ERCOT BESS arbitrage. It is not trivial to beat
+  with price-only ML.
+- A forecast-gate that skips days the model doesn't like is the one
+  technique that reliably moved our forecast-driven numbers by enough
+  to matter. Worth keeping.
+- Revenue is dominated by scarcity days; scarcity prediction with the
+  features we can retrieve improves over random but is not strong
+  enough to drive dispatch lift.
+- The realistic next step is feature acquisition (real forecast
+  archives for load / wind / solar), not more modeling on the same
+  features. Until then, every further model on price-history-only will
+  produce more variants of the 40-55% of ceiling band we've mapped out.
+
+**Test set status:** untouched. With what we have now, there is no
+reason to touch it — no strategy beats the floor on validation, so
+"best on val" is unpromising enough that a fresh holdout number would
+not change the conclusions.
+
+---
+
 ### 2026-04-24 — Quantile LightGBM + forecast-gated dispatch
 
 **Config:** three LightGBM quantile fits (tau = 0.1, 0.5, 0.9), 200 iters

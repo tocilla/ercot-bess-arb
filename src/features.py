@@ -40,6 +40,7 @@ def build_features(
     prices: pd.Series,
     tz: str | None = None,
     load: pd.Series | None = None,
+    scarcity_prob_daily: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
@@ -89,6 +90,30 @@ def build_features(
     if load is not None:
         df = _add_load_features(df, prices.index, load)
 
+    if scarcity_prob_daily is not None:
+        df = _add_scarcity_feature(df, prices.index, scarcity_prob_daily, tz)
+
+    return df
+
+
+def _add_scarcity_feature(
+    df: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    scarcity_prob_daily: pd.Series,
+    tz: str | None,
+) -> pd.DataFrame:
+    """Broadcast a per-local-date scarcity probability to the 15-min grid.
+
+    The probability at local date D is used as a feature on every interval
+    within date D. This is a legitimate feature for predicting intraday
+    prices on that day — but the probability itself must have been
+    generated out-of-sample (walk-forward) from data strictly before D,
+    not from D itself. Enforcing that is the caller's job.
+    """
+    local = target_index.tz_convert(tz) if tz else target_index
+    local_dates = pd.to_datetime(local.date)
+    prob_by_date = scarcity_prob_daily.reindex(local_dates, fill_value=np.nan)
+    df["scarcity_prob_today"] = prob_by_date.to_numpy()
     return df
 
 
