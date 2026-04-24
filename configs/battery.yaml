@@ -1,0 +1,10 @@
+# Default battery spec for phase 1 simulations.
+# See PLAN.md §4 and METHODOLOGY.md §6.
+
+power_mw: 100.0
+capacity_mwh: 200.0          # 2-hour duration battery
+roundtrip_eff: 0.85
+soc_min_frac: 0.05
+soc_max_frac: 0.95
+initial_soc_frac: 0.5
+degradation_cost_per_mwh: 2.0   # $2 / MWh throughput, placeholder

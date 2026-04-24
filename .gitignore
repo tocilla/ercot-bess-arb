@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Data — never commit raw or processed data
+data/raw/*
+data/processed/*
+data/interim/*
+!data/**/.gitkeep
+
+# Results — experiment outputs, models, logs
+results/*
+!results/.gitkeep
+*.pkl
+*.joblib
+*.parquet
+*.h5
+*.ckpt
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.key
+credentials.json
+api_keys.txt
+
+# Jupyter
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
