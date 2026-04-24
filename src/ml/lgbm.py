@@ -52,18 +52,27 @@ def lgbm_fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
     return LGBMForecaster().fit(X, y)
 
 
-def make_quantile_fit_fn(alpha: float, num_iterations: int = 300):
+def make_quantile_fit_fn(alpha: float, num_iterations: int = 300,
+                         seed: int | None = None):
     """Return a fit_fn that trains an LGBM with quantile objective at
     quantile `alpha` (0 < alpha < 1). Use alpha=0.5 for median, 0.1 for
-    lower tail, 0.9 for upper tail.
+    lower tail, 0.9 for upper tail. Optional `seed` sets deterministic
+    bagging / feature-sampling for seed-stability analysis.
     """
     params = dict(DEFAULT_PARAMS)
     params["objective"] = "quantile"
     params["alpha"] = alpha
     params["num_iterations"] = num_iterations
+    if seed is not None:
+        params["seed"] = seed
+        params["bagging_seed"] = seed
+        params["feature_fraction_seed"] = seed
+        params["data_random_seed"] = seed
+        params["deterministic"] = True
 
     def fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
-        return LGBMForecaster(params=params).fit(X, y)
+        return LGBMForecaster(params=dict(params)).fit(X, y)
 
-    fit_fn.__name__ = f"lgbm_q{int(alpha * 100):02d}_fit_fn"
+    suffix = f"_s{seed}" if seed is not None else ""
+    fit_fn.__name__ = f"lgbm_q{int(alpha * 100):02d}{suffix}_fit_fn"
     return fit_fn

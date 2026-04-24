@@ -43,6 +43,73 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Seed noise is big: ±2.8 pp of ceiling
+
+**Config:** Session-best ML setup — q50 LGBM + EIA features + 2019+
+truncated training + forecast-gate dispatch — run 5 times with seeds
+{7, 13, 23, 42, 101} on the same val window.
+
+**Results across 5 seeds:**
+
+| Seed | Revenue     | % ceiling | MAE     |
+|------|-------------|-----------|---------|
+| 7    | \$10,255,694 | 53.21%    | \$57.77 |
+| 13   | \$11,170,020 | 57.95%    | \$56.94 |
+| 23   | \$11,367,643 | 58.97%    | \$57.48 |
+| 42   | \$11,046,915 | 57.31%    | \$57.23 |
+| 101  | \$11,740,928 | 60.91%    | \$57.06 |
+
+**Statistics:**
+- Revenue: mean \$11.12M ± \$548k std, range \$1.49M
+- **% of ceiling: mean 57.67 ± 2.84 pp, range 7.71 pp**
+- MAE: mean \$57.30 ± \$0.34 (extremely stable)
+
+**Implications — a significant methodology correction:**
+
+1. **HRRR's supposed −8.5 pp hurt on dispatch is within seed noise.**
+   The HRRR vs EIA-only comparison was one-seed vs one-seed, and
+   seed noise across 5 trials spans 7.7 pp. The "HRRR hurt dispatch"
+   finding from the earlier entry is therefore not statistically
+   reliable — it may be true, but we can't conclude it from a single
+   seed. Re-running HRRR across the same 5 seeds is needed before
+   the claim stands.
+
+2. **Truncation's +5.8 pp win is near 2σ, probably real.** Full-history
+   was 50.6%, truncated was 56.4%, delta 5.8 pp. Seed std is 2.84 pp,
+   so the effect is roughly 2σ. Likely real but not definitive.
+
+3. **MAE is a much more stable quality signal than revenue.** Seed std
+   on MAE is <\$0.35; on revenue it's \$548k (5% of mean). This is a
+   further argument that MAE doesn't reliably predict dispatch revenue
+   — but it also means we can't use MAE as a noise-free tie-breaker
+   for dispatch, because MAE is deaf to the intraday-timing errors
+   that cost money.
+
+4. **All future head-to-head comparisons should report mean ± std
+   over ≥ 3 seeds.** The +ERCOT STWPF/STPPF experiment (backfill in
+   progress) must be evaluated multi-seed, not single-seed, or we
+   won't be able to distinguish signal from seed jitter.
+
+**Revised session-best:** EIA-only baseline captures **57.67 ± 2.84 pp
+of ceiling** on val, not 56.4%. 56.4% was the single seed we happened
+to sample first.
+
+**What broke / what surprised me:**
+- I expected seed std around ±1 pp. Instead it's ±2.8 pp. That's
+  enough to flip the sign of several findings in this session if they
+  were re-run with a different seed.
+- LGBM's seed sensitivity likely comes from bagging + feature sampling
+  (bagging_fraction=0.9, feature_fraction=0.9). Lower those toward
+  1.0 and seed noise would shrink — at the cost of giving up
+  regularization. Not doing that now.
+
+**Next:** resume ERCOT forecast backfill. When it completes, run
+`scripts/run_ercot_forecasts_experiment.py` with **5 seeds** (not 1)
+for both the baseline and the +STWPF/STPPF variant. Only conclude
+"forecasts help" if the delta in means substantially exceeds 2.84 pp.
+
+---
+
 ### 2026-04-25 — Adding HRRR improved MAE but HURT dispatch revenue
 
 **Config:** Same as prior EIA experiment — q50 LGBM + forecast-gate + 2019+
