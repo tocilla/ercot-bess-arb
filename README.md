@@ -15,6 +15,7 @@ evaluation protocol, and ML pitfalls to avoid.
 - [RESEARCH.md](RESEARCH.md) — literature review, benchmarks, open problems.
 - [FINDINGS.md](FINDINGS.md) — running log of experiments and results.
 - [DECISIONS.md](DECISIONS.md) — log of scope / design decisions with rationale.
+- [DATA_GAP.md](DATA_GAP.md) — what data we have, what we can still get, what's hard.
 
 ## Repo layout
 
