@@ -198,3 +198,47 @@ def get_fuel_type_year(
     out.to_parquet(path, index=False)
     logger.info("Cached %d rows to %s", len(out), path)
     return out
+
+
+def load_eia_series(start_year: int, end_year: int,
+                    respondent: str = "ERCO") -> pd.DataFrame:
+    """Return a tidy wide-format DataFrame indexed by UTC hourly timestamp
+    with columns `demand_actual_mw`, `demand_forecast_mw`, `net_gen_mw`,
+    `wind_mw`, `solar_mw`. Values missing for years before coverage.
+    """
+    region_frames = []
+    fuel_frames = []
+    for y in range(start_year, end_year + 1):
+        r = get_region_data_year(y, respondent=respondent)
+        if not r.empty:
+            region_frames.append(r[["timestamp_utc", "type", "value"]])
+        f = get_fuel_type_year(y, respondent=respondent)
+        if not f.empty:
+            fuel_frames.append(f[["timestamp_utc", "fueltype", "value"]])
+
+    if not region_frames:
+        return pd.DataFrame()
+
+    region = pd.concat(region_frames, ignore_index=True)
+    wide_region = region.pivot_table(
+        index="timestamp_utc", columns="type", values="value", aggfunc="mean"
+    )
+    wide_region = wide_region.rename(columns={
+        "D": "demand_actual_mw", "DF": "demand_forecast_mw",
+        "NG": "net_gen_mw", "TI": "net_interchange_mw",
+    })
+
+    if fuel_frames:
+        fuel = pd.concat(fuel_frames, ignore_index=True)
+        wide_fuel = fuel.pivot_table(
+            index="timestamp_utc", columns="fueltype", values="value", aggfunc="mean"
+        )
+        wide_fuel = wide_fuel.rename(columns={
+            "WND": "wind_mw", "SUN": "solar_mw", "NG": "gas_gen_mw",
+            "COL": "coal_mw", "NUC": "nuclear_mw",
+        })
+        out = wide_region.join(wide_fuel, how="outer")
+    else:
+        out = wide_region
+
+    return out.sort_index()

@@ -41,6 +41,7 @@ def build_features(
     tz: str | None = None,
     load: pd.Series | None = None,
     scarcity_prob_daily: pd.Series | None = None,
+    eia: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
@@ -93,6 +94,49 @@ def build_features(
     if scarcity_prob_daily is not None:
         df = _add_scarcity_feature(df, prices.index, scarcity_prob_daily, tz)
 
+    if eia is not None:
+        df = _add_eia_features(df, prices.index, eia)
+
+    return df
+
+
+def _add_eia_features(
+    df: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    eia: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add EIA-930 derived features. Forecast-vs-actual delta is the
+    operator's own forecast error, which is a proxy for scarcity risk.
+
+    The DF (day-ahead forecast) is published the day before. So using
+    the forecast for hour t is legitimate at time t (forecast was known
+    ≥ some hours before t). The ACTUAL demand values at t are only known
+    post-hoc and must be LAGGED.
+    """
+    if eia.index.tz is None:
+        raise ValueError("eia must be tz-aware")
+    # Forward-fill hourly to the 15-min target grid, limit to 3 intervals (1h).
+    eia_15 = eia.reindex(target_index, method="ffill", limit=3)
+
+    if "demand_forecast_mw" in eia_15.columns:
+        # Today's forecast — safe (was known ≥ 1 day prior).
+        df["eia_demand_forecast_mw"] = eia_15["demand_forecast_mw"]
+    if "demand_actual_mw" in eia_15.columns:
+        # Actuals must be lagged.
+        df["eia_demand_actual_lag_1d"] = eia_15["demand_actual_mw"].shift(INTERVALS_PER_DAY)
+    if "demand_forecast_mw" in eia_15.columns and "demand_actual_mw" in eia_15.columns:
+        # Yesterday's forecast minus yesterday's actual: forecaster error signal.
+        prev_err = (
+            eia_15["demand_forecast_mw"].shift(INTERVALS_PER_DAY)
+            - eia_15["demand_actual_mw"].shift(INTERVALS_PER_DAY)
+        )
+        df["eia_forecast_error_lag_1d"] = prev_err
+    if "wind_mw" in eia_15.columns:
+        df["eia_wind_lag_1d"] = eia_15["wind_mw"].shift(INTERVALS_PER_DAY)
+        df["eia_wind_lag_1w"] = eia_15["wind_mw"].shift(7 * INTERVALS_PER_DAY)
+    if "solar_mw" in eia_15.columns:
+        df["eia_solar_lag_1d"] = eia_15["solar_mw"].shift(INTERVALS_PER_DAY)
+        df["eia_solar_lag_1w"] = eia_15["solar_mw"].shift(7 * INTERVALS_PER_DAY)
     return df
 
 

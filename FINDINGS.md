@@ -43,6 +43,76 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — Truncated training wins: full-history vs 2019+ head-to-head
+
+**Config:** q50 LightGBM, 200 iters, forecast-gate dispatch, same val
+window (2020-11-01 → 2022-12-31, 791 days), same 27 features (prices
++ load + EIA-930 demand forecast + wind/solar lags). Walk-forward
+monthly. `allow_nan_features=True` so LightGBM can handle pre-2019
+EIA NaN rows.
+
+**The question:** more training data (2011+) or feature-complete
+training data (2019+)?
+
+**Results on validation:**
+
+| Variant | Training | Rows | Revenue   | % ceiling | MAE    | RMSE   | Wall clock |
+|---------|----------|------|-----------|-----------|--------|--------|------------|
+| A       | 2011-01+ (NaN pre-2019 EIA) | ~334k | \$9.75M | 50.6% | \$61.23 | \$626.07 | 226s |
+| **B**   | **2019-01+** (truncated)    | **~120k** | **\$10.86M** | **56.4%** | **\$57.71** | **\$611.09** | **102s** |
+
+**B wins on every metric.** Despite 3× less training data, the
+truncated model:
+- Earns +\$1.11M more on val (+5.8 percentage points of ceiling)
+- Has lower MAE (\$57.71 vs \$61.23)
+- Has lower RMSE (\$611 vs \$626)
+- Finishes in half the wall-clock time
+
+**This is the best ML result of the session.** 56.4% of ceiling beats
+the prior best of 53.3% (q50 + gate on price+load only). Combined lift
+of +3 pp from adding EIA features + truncating training compounds
+cleanly.
+
+**Interpretation — the non-stationarity thesis holds:**
+
+Pre-2019 ERCOT is a different market: less wind/solar capacity,
+different thermal generator mix, no winterization standards, a
+mostly-offline battery fleet. LightGBM trained on that history learns
+patterns that are actively misleading for 2020+ dispatch. The extra
+2011-2018 rows are not "more data for the same problem" — they are
+data from a meaningfully different conditional distribution, and
+training on them drags the model toward behaviors that don't hold in
+the val period.
+
+This is specifically a problem for gradient-boosting on tabular data.
+GBMs don't have any natural mechanism for down-weighting old regimes.
+Every training row contributes equally to split choices.
+
+**What this changes in the plan:**
+
+1. **New default: train on 2019-01-01+ for any model using EIA or
+   post-2019 features.** Document in DECISIONS.md.
+2. **The original splits stay valid for price+load-only experiments**
+   (they covered full 14-year history) — those numbers are still
+   legitimate comparisons for the baselines.
+3. **Future HRRR addition**: HRRR archive starts 2014-08. With
+   truncated training at 2019+, HRRR data is always present — no
+   NaN-handling needed, no distribution mismatch. Clean path.
+
+**What broke / what surprised me:**
+- Expected the NaN-fill variant to be within a couple pp of the
+  truncated one. The gap (5.8 pp) is bigger than I'd have guessed,
+  and the direction is unambiguous (B wins on MAE *and* RMSE *and*
+  revenue — no interpretive trade-off).
+- EIA wind/solar lag features ended up at similar importance to
+  load_lag_1d in the truncated fit. Not game-changing but useful.
+
+**Next:** update splits config + DECISIONS.md. Start HRRR narrow
+backfill (1 cycle × 1 fxx, val window only, 8-way parallel, ~26 min)
+to see if HRRR temperature forecasts compound on top of EIA features.
+
+---
+
 ### 2026-04-24 — Data-source infrastructure landed
 
 **Config:** no modeling run — this entry records the addition of four

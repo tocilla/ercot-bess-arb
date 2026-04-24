@@ -66,6 +66,33 @@ the correct revenue target (distinct from 5-min SCED dispatch LMPs).
 HB_HOUSTON and HB_WEST, and/or run on CAISO for a lower-volatility
 comparison. Also revisit if forecast-vintage archives become a blocker.
 
+### 2026-04-24 — Training window truncated to 2019-01-01+ for exogenous-feature models
+
+**Decision:** Any model that uses post-2019 exogenous features (EIA-930,
+ERCOT Public API forecasts, HRRR weather forecasts) trains on
+2019-01-01 onward, not 2011-01-01.
+
+**Alternatives considered:**
+- Keep 2011+ training, fill NaN for unavailable exogenous features.
+  Rejected based on a head-to-head measurement on validation: training
+  on 2011+ with NaN pre-2019 EIA produced \$9.75M revenue / 50.6% of
+  ceiling / MAE \$61.23. Truncated training on 2019+ produced \$10.86M
+  / 56.4% of ceiling / MAE \$57.71 — better on every metric, despite
+  3× less training data.
+- Shift entire splits forward (2019+/2022+/2023+). Rejected because it
+  invalidates all prior session results for fair comparison, and the
+  current val window has enough coverage.
+
+**Rationale:** ERCOT 2011-2018 is a materially different market from
+2020+ (wind+solar capacity, winterization, BESS fleet). LightGBM has
+no natural mechanism to down-weight an out-of-regime training signal.
+The extra data hurts more than it helps.
+
+**Revisit when:** (a) we integrate sample-weighting or time-decay
+methods that can legitimately use older data at lower weight, (b) HRRR
+backfill is complete — then re-run the same A/B to see if weather
+forecasts extend the useful training horizon.
+
 ### 2026-04-24 — RTM data is 15-min, not 5-min
 
 **Decision:** All dispatch simulations use 15-minute intervals.

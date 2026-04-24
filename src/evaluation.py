@@ -48,6 +48,8 @@ def walk_forward_predict(
     test_end: pd.Timestamp,
     retrain_every_days: int = 30,
     min_train_rows: int = 1000,
+    allow_nan_features: bool = False,
+    train_start: pd.Timestamp | None = None,
 ) -> pd.Series:
     """Produce a walk-forward prediction series over [test_start, test_end].
 
@@ -58,6 +60,13 @@ def walk_forward_predict(
         test_start, test_end: inclusive start, inclusive end of the test window.
         retrain_every_days: re-fit the model every N days walking forward.
         min_train_rows: raise if at any boundary training rows < this.
+        allow_nan_features: if True, keep rows whose FEATURES are NaN and
+            only drop rows with NaN TARGET. Gradient-boosting models like
+            LightGBM handle NaN natively; enabling this lets the model see
+            all history even when some features are missing for part of it.
+        train_start: earliest training timestamp. If given, training rows
+            with `index < train_start` are excluded. Useful for Option B
+            style "short-window retrain" experiments.
 
     Returns:
         pd.Series of predictions indexed by feature index, valued only in
@@ -71,8 +80,11 @@ def walk_forward_predict(
     feature_cols = [c for c in features.columns if c != target_col]
     predictions = pd.Series(np.nan, index=features.index, name="prediction")
 
-    # Drop rows with any NaN in features or target — lags create warmup NaN.
-    clean_mask = features.notna().all(axis=1)
+    target_ok = features[target_col].notna()
+    if allow_nan_features:
+        clean_mask = target_ok
+    else:
+        clean_mask = features.notna().all(axis=1)
 
     boundaries = _retrain_boundaries(test_start, test_end, retrain_every_days)
 
@@ -84,19 +96,25 @@ def walk_forward_predict(
 
         # Train on everything strictly before `boundary` AND with usable features.
         train_mask = (features.index < boundary) & clean_mask
+        if train_start is not None:
+            train_mask &= (features.index >= train_start)
         if train_mask.sum() < min_train_rows:
             raise RuntimeError(
                 f"At boundary {boundary}: only {train_mask.sum()} training rows "
-                f"(need >= {min_train_rows}). Check warmup period."
+                f"(need >= {min_train_rows}). Check warmup / train_start."
             )
         X_train = features.loc[train_mask, feature_cols]
         y_train = features.loc[train_mask, target_col]
         model = fit_fn(X_train, y_train)
 
-        # Predict on [boundary, next_boundary) with clean feature rows.
+        # Predict on [boundary, next_boundary). For prediction we require
+        # TARGET not present (we're forecasting) but can still allow NaN
+        # features.
         predict_mask = (
-            (features.index >= boundary) & (features.index < next_boundary) & clean_mask
+            (features.index >= boundary) & (features.index < next_boundary)
         )
+        if not allow_nan_features:
+            predict_mask &= clean_mask
         if predict_mask.any():
             X_pred = features.loc[predict_mask, feature_cols]
             predictions.loc[X_pred.index] = model.predict(X_pred)
