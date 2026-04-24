@@ -43,6 +43,86 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — Scarcity-day classifier + rule-based dispatch (honest negative result)
+
+**Config:** binary LightGBM (is_unbalance=True, AP metric) trained
+walk-forward monthly on daily features (lagged price aggregates + daily
+load peaks + calendar + days-since-scarcity). Scarcity defined as
+`daily max RTM SPP > \$500`. Dispatch integration: on days with
+p_scarcity > 0.5, replace LGBM forecast-driven schedule with a fixed
+"hold for peak" rule — charge 01:00-07:00 local, discharge 15:00-21:00
+local, both at full rated power.
+
+**Data:** HB_NORTH validation window (791 days). Overall scarcity rate
+on val = 11.5% (91/791 days).
+
+**Classifier quality:**
+- **PR-AUC: 0.220** (baseline = 0.115, so ~2× random)
+- Precision @ recall=0.3: 0.269
+- Precision @ recall=0.5: 0.145
+- At threshold 0.5: TP=18, FP=50, FN=73, TN=650 (recall 19.8%,
+  precision 26.5%)
+
+The classifier learns real signal from price + load history — it is
+meaningfully better than flipping a weighted coin. But it is not good
+enough to replace a LightGBM fit in point-forecast mode.
+
+**Dispatch comparison (val):**
+
+| Rank | Strategy                                       | Revenue    | % ceiling | Lift vs floor |
+|------|------------------------------------------------|------------|-----------|---------------|
+| 1    | ceiling                                        | \$19.27M   | 100.0%    | +\$2.51M      |
+| 2    | floor                                          | \$16.77M   | 87.0%     | 0             |
+| 3    | LGBM + load (no classifier)                    | \$9.17M    | 47.6%     | −\$7.60M      |
+| 4    | **Scarcity-aware (classifier + rule)**         | \$8.65M    | 44.9%     | −\$8.11M      |
+| 5    | **Scarcity oracle (perfect classifier + rule)**| \$4.55M    | 23.6%     | −\$12.22M     |
+
+**What this negative result tells us:**
+
+1. **The rule-based "hold then dump" override is strictly worse than
+   the LGBM schedule** — even with a PERFECT (oracle) scarcity classifier.
+   23.6% of ceiling < 47.6% of ceiling. A good classifier paired with a
+   bad dispatch rule destroys value.
+
+2. **The fixed 01:00-07:00 / 15:00-21:00 window mis-times many scarcity
+   events.** ERCOT scarcity doesn't peak at a fixed clock hour — it
+   peaks when net load (load minus renewables) hits the capacity ceiling,
+   which shifts by season and weather pattern. The fixed-window rule
+   often places discharge at the wrong hours even on true scarcity days.
+
+3. **Rigid rule also overtrades.** The rule tries to charge for 6h and
+   discharge for 6h at full power — way beyond the 200 MWh usable. The
+   battery hits its SOC cap very quickly, then most of the rule is
+   clipped. Clipped-interval rate doubled (6-7% vs 3% for LGBM), all
+   wasted cycles.
+
+4. **The right way to use a scarcity signal is as a FEATURE, not a
+   SWITCH.** A future experiment: include `p_scarcity_today` as an
+   input feature to the per-interval LGBM forecaster. The forecaster
+   then learns by itself how to inflate afternoon prices on likely-
+   scarcity days. Tested separately from this report.
+
+5. **This is exactly the pattern the session has been uncovering.** A
+   naive-looking improvement (add a classifier, override bad days)
+   destroys value when it doesn't respect the battery's physics and
+   the market's irregular peak timing. The floor baseline already
+   reflects *ideal timing under a cycle cap*; any rigid rule fights
+   that rather than extending it.
+
+**What broke / what surprised me:**
+- Expected scarcity_oracle to be an UPPER bound on classifier-aware
+  dispatch. It's a LOWER bound of that approach instead, because the
+  dispatch *rule* itself is the problem.
+- My first run crashed on an index length mismatch because the
+  classifier drops warmup rows. Fixed by aligning the eval mask to the
+  classifier's (reduced) index rather than the daily features index.
+
+**Next:** skip the rule-override approach entirely. Move to probabilistic
+(quantile) point forecasts and a *spread-uncertainty* dispatch gate that
+scales cycle size with forecast confidence.
+
+---
+
 ### 2026-04-24 — LightGBM + ERCOT load features on validation
 
 **Config:** same battery (100 MW / 200 MWh), same 30-day walk-forward,
