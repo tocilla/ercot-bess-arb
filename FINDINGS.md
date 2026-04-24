@@ -43,6 +43,70 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — LightGBM + ERCOT load features on validation
+
+**Config:** same battery (100 MW / 200 MWh), same 30-day walk-forward,
+same L1 LGBM. Added 5 exogenous features from hourly ERCOT system-wide
+load (actuals only — no historical forecasts available from gridstatus):
+`load_lag_1h`, `load_lag_1d`, `load_lag_1w`, `load_roll_mean_1d_left`,
+`load_rel_to_7d_mean`. Total feature count: 15 → 20.
+
+**Data:** HB_NORTH RTM SPP val window (791 days). Plus hourly ERCOT load
+2011–2022 cached via `get_hourly_load_post_settlements`.
+
+**What:** rerun of the previous LGBM walk-forward with load features
+added. Load is forward-filled from hourly to 15-min granularity. All load
+features are lagged (≥ 1h) so no same-time leakage.
+
+**Results (val window):**
+
+| Strategy                  | Revenue    | % ceiling | Lift vs floor | Δ vs LGBM no-load |
+|---------------------------|------------|-----------|---------------|-------------------|
+| perfect_foresight_ceiling | \$19.27M   | 100.0%    | +\$2.51M      | —                 |
+| natural_spread_floor      | \$16.77M   | 87.0%     | 0             | —                 |
+| lgbm + load features      | \$9.17M    | **47.6%** | −\$7.60M      | **+\$1.14M**      |
+| lgbm (prices only)        | \$8.03M    | 41.6%     | −\$8.74M      | baseline          |
+
+Forecast quality: MAE \$58.53 (was \$57.68), RMSE \$619.30 (was \$605.42).
+
+**What this tells us:**
+
+1. **Exogenous features help dispatch without helping point-forecast
+   accuracy.** MAE moved up slightly; RMSE moved up slightly. But
+   dispatch revenue improved \$1.14M (+6 pp of ceiling). The model uses
+   load features to pick the right intervals to charge/discharge, even
+   when it's no better at predicting the level.
+
+2. **We're still \$7.6M below the floor.** The floor captures 87% of
+   ceiling; our best ML now captures 47.6%. Load-only exogenous signals
+   don't close the gap. Scarcity prediction — which depends on capacity
+   margin (load + outages − renewables) — is the missing piece, and
+   ERCOT doesn't archive historical wind/solar at the granularity we
+   need via gridstatus.
+
+3. **Tail losses reduced.** Worst day: −\$1.36M → −\$1.18M. Better
+   feature information made the model less over-confident on bad days.
+
+4. **Sharpe improved from 0.12 to 0.18.** The distribution of daily
+   revenue is tighter with load features — the model makes smaller, more
+   consistent bets.
+
+**What broke / what surprised me:**
+- `gridstatus.Ercot.get_wind_actual_and_forecast_hourly` and its solar
+  analog return "no documents" for any historical date — the MIS
+  archives for these roll off, only ~8 days retained. Historical load
+  works via a separate `get_hourly_load_post_settlements` path pointing
+  to a different ERCOT archive. Documented in DATA.md as an open
+  question for phase 2: EIA-930 or self-hosted forecast snapshotting
+  would be the next move if we pursue wind/solar features.
+- Improvement on MAE was ~zero despite adding informative features.
+  This is a useful calibration: when evaluating future models, do not
+  rely on MAE alone — score everything on revenue lift.
+
+**Next:** scarcity day classifier (binary), then quantile forecasts.
+
+---
+
 ### 2026-04-24 — LightGBM walk-forward on validation window
 
 **Config:** default battery (100 MW / 200 MWh). Split per

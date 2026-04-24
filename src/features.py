@@ -36,12 +36,21 @@ def _rolling_left(x: pd.Series, window: int, fn: str) -> pd.Series:
     return getattr(r, fn)()
 
 
-def build_features(prices: pd.Series, tz: str | None = None) -> pd.DataFrame:
+def build_features(
+    prices: pd.Series,
+    tz: str | None = None,
+    load: pd.Series | None = None,
+) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
     Args:
         prices: tz-aware UTC-indexed price series ($/MWh, 15-min).
         tz: local tz for calendar features (e.g. "US/Central").
+        load: optional tz-aware UTC-indexed hourly load series (MW). If
+            provided, adds load-derived features (lag 1d/1w, rolling
+            stats, relative-to-baseline). Load is forward-filled from
+            hourly to 15-min and treated as an *actual* that must be
+            used only with a lag (no same-time features).
 
     Returns:
         DataFrame indexed by the same UTC index with columns:
@@ -51,6 +60,10 @@ def build_features(prices: pd.Series, tz: str | None = None) -> pd.DataFrame:
             roll_std_1d_left
             roll_mean_1w_left
             hour, interval_of_day, dow, month, is_weekend
+            (if load provided:)
+            load_lag_1h, load_lag_1d, load_lag_1w
+            load_roll_mean_1d_left
+            load_rel_to_7d_mean     load_lag_1h / trailing-7d mean of load
     """
     if prices.index.tz is None:
         raise ValueError("prices must be tz-aware")
@@ -73,6 +86,34 @@ def build_features(prices: pd.Series, tz: str | None = None) -> pd.DataFrame:
     df["month"] = local_idx.month.astype("int16")
     df["is_weekend"] = (local_idx.dayofweek >= 5).astype("int8")
 
+    if load is not None:
+        df = _add_load_features(df, prices.index, load)
+
+    return df
+
+
+def _add_load_features(df: pd.DataFrame, target_index: pd.DatetimeIndex,
+                       load: pd.Series) -> pd.DataFrame:
+    """Add load-derived features. Load is hourly; reindex to the 15-min
+    target grid via forward-fill (each hour's load applies to its 4 intervals)."""
+    if load.index.tz is None:
+        raise ValueError("load must be tz-aware")
+
+    # Forward-fill to target (15-min) grid. Limit the fill to 3 intervals so a
+    # gap > 1 hour stays NaN.
+    load_15 = load.reindex(target_index, method="ffill", limit=3)
+
+    # Lag 1 hour (= 4 intervals), 1 day, 1 week.
+    df["load_lag_1h"] = load_15.shift(4)
+    df["load_lag_1d"] = load_15.shift(INTERVALS_PER_DAY)
+    df["load_lag_1w"] = load_15.shift(7 * INTERVALS_PER_DAY)
+
+    # Rolling mean (24h, closed='left'): trailing-day demand baseline.
+    df["load_roll_mean_1d_left"] = _rolling_left(load_15, INTERVALS_PER_DAY, "mean")
+
+    # Relative: load_lag_1h vs trailing-7d mean (excluding current value).
+    trailing_7d = _rolling_left(load_15, 7 * INTERVALS_PER_DAY, "mean")
+    df["load_rel_to_7d_mean"] = df["load_lag_1h"] / trailing_7d
     return df
 
 

@@ -36,6 +36,7 @@ if str(ROOT) not in sys.path:
 from src.baselines import daily_oracle_schedule  # noqa: E402
 from src.battery import BatterySpec  # noqa: E402
 from src.data.ercot import INTERVAL_MINUTES, get_rtm_spp_series  # noqa: E402
+from src.data.ercot_load import get_load_series  # noqa: E402
 from src.dispatch import run_dispatch  # noqa: E402
 from src.evaluation import walk_forward_predict  # noqa: E402
 from src.features import build_features  # noqa: E402
@@ -76,6 +77,8 @@ def main() -> None:
                     help="Which window to evaluate on (val by default; "
                          "test requires intentional reveal).")
     ap.add_argument("--solver", default="HIGHS")
+    ap.add_argument("--with-load", action="store_true",
+                    help="Include ERCOT load features (exogenous).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s: %(message)s")
@@ -99,10 +102,18 @@ def main() -> None:
     print(f"  rows: {len(prices):,}, "
           f"span: {prices.index.min()} → {prices.index.max()}")
 
+    load_series = None
+    if args.with_load:
+        print(f"Loading ERCOT load {start_year}–{end_year} …")
+        load_df = get_load_series(start_year, end_year)
+        load_series = load_df["ercot_mw"].rename("ercot_mw")
+        print(f"  load rows: {len(load_series):,}")
+
     print("Building features …")
     t0 = time.time()
-    feats = build_features(prices, tz=tz)
+    feats = build_features(prices, tz=tz, load=load_series)
     print(f"  {len(feats.columns)} columns, built in {time.time() - t0:.1f}s")
+    print(f"  feature cols: {[c for c in feats.columns if c != 'target']}")
 
     print(f"Walk-forward predict on {args.split} window "
           f"[{test_start} → {test_end}], refit every {retrain_every_days}d …")
