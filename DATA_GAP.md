@@ -4,6 +4,27 @@ Living document. The session so far has been limited to `gridstatus.Ercot`
 (which wraps older MIS endpoints) and so under-estimated what's available.
 This document reconciles the gap and names concrete next sources.
 
+## Status update — 2026-04-24
+
+Infrastructure for every source except commercial ones is now in the
+repo. The fetchers are thin, cached, tested:
+
+| Source               | Module                       | Status                              |
+|----------------------|------------------------------|-------------------------------------|
+| ERCOT RTM SPP        | src/data/ercot.py            | live, 14 years cached               |
+| ERCOT historical load| src/data/ercot_load.py       | live, 14 years cached               |
+| FRED gas prices      | src/data/fred.py             | live, Henry Hub 1997+ cached        |
+| EIA-930              | src/data/eia930.py           | live, 2024 smoke-tested             |
+| HRRR weather         | src/data/hrrr.py             | live, single-cycle smoke-tested     |
+| ERCOT Public API     | src/data/ercot_api.py        | scaffolded, blocked on u/p          |
+
+Run `python scripts/smoke_data_sources.py` to re-verify them all.
+
+The only remaining credential gap is ERCOT account username+password for
+the Public API OAuth flow. Subscription key is already wired in `.env`.
+Once those two lines are filled, NP4-732-CD / NP4-737-CD / NP3-560-CD /
+NP3-233-CD all become available.
+
 ## Status summary
 
 | Source                                     | Status for our project | Cost            | Effort     |

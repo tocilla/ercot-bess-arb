@@ -43,6 +43,49 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — Data-source infrastructure landed
+
+**Config:** no modeling run — this entry records the addition of four
+new data-source fetchers. Everything still on validation set; test set
+untouched.
+
+**What:** wired up fetchers for the data sources identified in
+DATA_GAP.md:
+
+- FRED (Henry Hub gas price, no API key) — 7,353 daily obs 1997–present.
+- EIA-930 region-data (hourly demand, day-ahead demand forecast, net
+  generation, interchange for every US BA) — key in .env, 2024 smoke
+  returns 35,183 rows with D/DF/NG/TI types.
+- EIA-930 fuel-type-data (coal, gas, nuclear, wind, solar, hydro, other
+  hourly) — works on same key. 2023 smoke: wind avg 12,331 MW, solar
+  avg 3,638 MW, full year per fuel.
+- NOAA HRRR weather forecasts via `herbie` + anonymous S3 — no key.
+  Cycle 2024-06-15 12Z F03 Texas mean temperature = 81.7 F (reasonable).
+- ERCOT Public API client (NP4-732-CD wind, NP4-737-CD solar,
+  NP3-560-CD load forecast, NP3-233-CD outages) — scaffolded with ROPC
+  auth. Blocked on ERCOT account username+password.
+
+**Why this matters:** each of the DATA_GAP.md items identified as "most
+likely to close the floor-to-model gap" is now a one-function-call away.
+The next modeling session can immediately try: (1) EIA-930 day-ahead
+demand forecast as a replacement for our current lagged-actual load
+features; (2) HRRR Texas temperature forecast as an exogenous scarcity
+driver; (3) FRED gas prices as a marginal-cost feature.
+
+**What broke / what surprised me:**
+- EIA-930 API 502s on large offset (>10k rows) — switched to
+  month-by-month chunking + retry-with-backoff, which is fine.
+- HRRR longitudes are in 0..360° on S3 not -180..180 — one-line fix.
+- Herbie bundles eccodes in its wheel; no `brew install eccodes` needed.
+
+**Next modeling step (clear):** refit q50 walk-forward with the real
+EIA-930 day-ahead demand forecast and HRRR temperature forecasts as
+features, keeping the forecast-gate dispatch. First honest test of
+whether exogenous vintaged forecasts actually beat the floor. Timing:
+~4–6 hours of integration + walk-forward compute.
+
+---
+
 ### 2026-04-24 — Combined strategy (q50 + load + scarcity-prob feature + gate)
 
 **Config:** two-stage walk-forward.
