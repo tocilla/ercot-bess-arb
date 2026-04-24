@@ -29,8 +29,9 @@ Cache layout:
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -110,6 +111,100 @@ def _summarize_cycle(cycle_utc: datetime, fxx: int) -> HrrrSummary | None:
         tx_max_t2m_k=float(np.nanmax(t2m.values)),
         tx_mean_wind10m_mps=float(np.nanmean(wind10)),
     )
+
+
+def fetch_hrrr_range_parallel(
+    start_date: datetime,
+    end_date: datetime,
+    cycles: tuple[int, ...] = (12,),
+    fxx_range: tuple[int, ...] = (6,),
+    max_workers: int = 8,
+    on_progress=None,
+) -> pd.DataFrame:
+    """Parallel HRRR backfill across a date range. One task per
+    (date, cycle, fxx). Caches per-date summaries incrementally.
+
+    Args:
+        start_date, end_date: UTC date bounds, inclusive.
+        cycles, fxx_range: which cycles and forecast hours to pull.
+        max_workers: thread pool size. 8 is a sensible default.
+        on_progress: optional callable(done, total) for status updates.
+    """
+    # Enumerate tasks by calendar date; within each date, all requested cycles/fxx.
+    dates: list[datetime] = []
+    d = start_date
+    while d <= end_date:
+        dates.append(d)
+        d = d + timedelta(days=1)
+
+    # Load existing cache by date — skip days that already have rows for all
+    # requested cycles × fxx.
+    needed: list[tuple[datetime, int, int]] = []
+    cache_by_date: dict[datetime, pd.DataFrame] = {}
+    want_pairs = {(c, f) for c in cycles for f in fxx_range}
+    for d in dates:
+        path = _cache_path(d)
+        if path.exists():
+            df_cached = pd.read_parquet(path)
+            have = set(zip(df_cached["cycle_utc"].dt.hour,
+                           df_cached["forecast_hour"]))
+            cache_by_date[d] = df_cached
+            missing = want_pairs - have
+        else:
+            missing = want_pairs
+        for c, f in missing:
+            needed.append((d, c, f))
+
+    total = len(needed)
+    if total == 0:
+        logger.info("All requested HRRR summaries already cached")
+        return pd.concat([df for df in cache_by_date.values() if not df.empty],
+                         ignore_index=True) if cache_by_date else pd.DataFrame()
+
+    logger.info("HRRR backfill: %d cycles × fxx pairs to fetch across %d days "
+                "(max_workers=%d)", total, len(dates), max_workers)
+
+    done = 0
+    new_rows: list[dict] = []
+
+    def _task(d: datetime, cyc_hr: int, fxx: int):
+        cyc = d.replace(hour=cyc_hr, minute=0, second=0, microsecond=0, tzinfo=None)
+        s = _summarize_cycle(cyc, fxx)
+        return d, s
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_task, d, c, f) for d, c, f in needed]
+        for fut in as_completed(futures):
+            d, s = fut.result()
+            done += 1
+            if on_progress:
+                on_progress(done, total)
+            if s is None:
+                continue
+            row = {
+                "cycle_utc": s.cycle_utc,
+                "valid_utc": s.valid_utc,
+                "forecast_hour": s.forecast_hour,
+                "tx_mean_t2m_k": s.tx_mean_t2m_k,
+                "tx_max_t2m_k": s.tx_max_t2m_k,
+                "tx_mean_wind10m_mps": s.tx_mean_wind10m_mps,
+            }
+            new_rows.append(row)
+            # Persist incrementally per-date so a crash doesn't lose progress.
+            date_rows = [r for r in new_rows if r["cycle_utc"].date() == d.date()]
+            if date_rows:
+                merged = pd.concat([
+                    cache_by_date.get(d, pd.DataFrame()),
+                    pd.DataFrame(date_rows),
+                ], ignore_index=True)
+                merged = merged.drop_duplicates(
+                    subset=["cycle_utc", "forecast_hour"], keep="last"
+                ).sort_values(["cycle_utc", "forecast_hour"])
+                merged.to_parquet(_cache_path(d), index=False)
+                cache_by_date[d] = merged
+
+    all_frames = [df for df in cache_by_date.values() if not df.empty]
+    return pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
 
 
 def fetch_hrrr_day(

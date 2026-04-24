@@ -43,6 +43,84 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Adding HRRR improved MAE but HURT dispatch revenue
+
+**Config:** Same as prior EIA experiment — q50 LGBM + forecast-gate + 2019+
+truncated training. Val window 2020-11-01 → 2022-12-31. Added 3 HRRR
+features on top of 27 prior features:
+`hrrr_tx_mean_t2m_k`, `hrrr_tx_max_t2m_k`, `hrrr_tx_mean_wind10m_mps`.
+
+Backfill scope: 1 cycle/day (12Z) × 1 forecast hour (F06, valid 18Z
+= noon local). 1,457 HRRR rows across 2019–2022. Wall-clock: 30.8 min
+with 8-way parallelism.
+
+**Results (val window):**
+
+| Variant | Features | Revenue | % ceiling | MAE | RMSE |
+|---|---|---|---|---|---|
+| Baseline (EIA only) | 27 | **\$10.86M** | **56.4%** | \$57.71 | \$611.09 |
+| +HRRR | 30 | \$9.24M | 47.9% | **\$57.18** | **\$610.43** |
+
+**HRRR hurt revenue by −\$1.63M (−8.5 pp of ceiling) while simultaneously
+improving MAE and RMSE on the same val window.**
+
+This is the session's *third* observation of the pattern "point-forecast
+accuracy improvement ≠ dispatch revenue improvement":
+1. Scarcity classifier (PR-AUC ↑, dispatch ↓ via rule override)
+2. Combined scarcity-prob feature (MAE neutral, dispatch slightly worse)
+3. HRRR daily temperature forecast (MAE ↓, dispatch ↓)
+
+**Why this likely happens:**
+
+- HRRR features are slow-moving daily aggregates. One 18Z temperature
+  forecast applied to 96 intraday intervals gives no intraday-timing
+  information the model didn't already have from `hour`, `dow`, etc.
+- The model uses the new feature to smooth *average* prediction quality,
+  improving MAE on typical days. But average-day errors don't cost
+  revenue. Tail-day errors cost revenue.
+- The forecast-gate's skip decision depends on predicted intraday
+  spread. A slightly "flatter" forecast (lower variance) → more days
+  pass the gate → more days the model commits to an incorrect timing
+  choice on days when actuals surprise.
+- Temperature and wind *actuals* (as they happened) would be more
+  informative than the D-ahead forecast for MAE, but both are non-
+  causal for dispatch timing (you can't use them at decision time).
+
+**What doesn't work vs. what might:**
+
+The current HRRR scope (1 cycle, 1 fxx, daily aggregate) is too coarse.
+What would plausibly help:
+- **Multiple fxx values per day** (F+3, F+9, F+15, F+21) so the model
+  has explicit intraday shape information — e.g. "tomorrow midnight is
+  warmer than dawn".
+- **Forecast error features** — deviation of today's forecast from same
+  month's average. Captures "unusual heat" signal directly.
+- **Wind ramp features** — rate of change in forecast wind speed. This
+  is a well-known scarcity predictor in ERCOT.
+- **HRRR as input to a dedicated scarcity classifier**, with its
+  probability then fed as a daily feature (instead of raw temps).
+
+**What broke / what surprised me:**
+- Initial result was confounded by too-short ffill (1h limit → HRRR
+  NaN for most intervals). Fixed to 24h — result barely changed, which
+  is the real story: HRRR as a daily-level feature just doesn't help
+  intraday dispatch.
+- RMSE improvement was tiny (0.1%). Expected either a larger MAE/RMSE
+  win or a revenue win. Got a small MAE win and a large revenue loss.
+
+**Decision for next step:**
+Do not widen HRRR backfill until we've demonstrated HRRR *can* add
+value on a different feature design. Next experiment: ERCOT Public
+API's vintaged wind + solar forecasts (NP4-732-CD, NP4-737-CD).
+These are ERCOT's OWN operational forecasts (STWPF, STPPF), not
+external weather data, and are more directly tied to capacity margin
+than air temperature. They should carry more dispatch-relevant signal.
+
+**The session-best ML result stays at 56.4% of ceiling** (EIA + load +
+prices + q50 + forecast-gate, 2019+ truncated training).
+
+---
+
 ### 2026-04-24 — Truncated training wins: full-history vs 2019+ head-to-head
 
 **Config:** q50 LightGBM, 200 iters, forecast-gate dispatch, same val

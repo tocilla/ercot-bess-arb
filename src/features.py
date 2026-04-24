@@ -42,6 +42,7 @@ def build_features(
     load: pd.Series | None = None,
     scarcity_prob_daily: pd.Series | None = None,
     eia: pd.DataFrame | None = None,
+    hrrr: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
@@ -97,6 +98,52 @@ def build_features(
     if eia is not None:
         df = _add_eia_features(df, prices.index, eia)
 
+    if hrrr is not None:
+        df = _add_hrrr_features(df, prices.index, hrrr)
+
+    return df
+
+
+def _add_hrrr_features(
+    df: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    hrrr: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add HRRR weather-forecast features. The HRRR summary table has one
+    row per (cycle, forecast_hour) with `valid_utc` and the Texas aggregates.
+
+    For each target interval *t*, we pick the HRRR forecast whose
+    `valid_utc` is closest to *t* AND whose `cycle_utc` is strictly
+    before *t* (so we only use forecasts available at decision time).
+    """
+    if "valid_utc" not in hrrr.columns or "cycle_utc" not in hrrr.columns:
+        raise ValueError("hrrr must have cycle_utc and valid_utc columns")
+    # Hourly-index the HRRR values by valid_utc. If a target t falls in
+    # [valid_utc, valid_utc+1h), we use that forecast — provided its
+    # cycle was published before t.
+    h = hrrr.copy()
+    h["cycle_utc"] = pd.to_datetime(h["cycle_utc"], utc=True)
+    h["valid_utc"] = pd.to_datetime(h["valid_utc"], utc=True)
+    # Keep the most-recent forecast (newest cycle) per valid time.
+    h = h.sort_values(["valid_utc", "cycle_utc"])
+    h = h.drop_duplicates(subset=["valid_utc"], keep="last")
+    h = h.set_index("valid_utc")
+
+    # Reindex to the 15-min target grid, forward-filling from the most
+    # recent valid forecast. Limit fill to 24h so one HRRR obs/day covers
+    # the full day, but a multi-day outage still stays NaN.
+    cols = ["tx_mean_t2m_k", "tx_max_t2m_k", "tx_mean_wind10m_mps",
+            "cycle_utc"]
+    h_15 = h[cols].reindex(
+        target_index.union(h.index), method=None
+    ).sort_index().ffill(limit=INTERVALS_PER_DAY).reindex(target_index)
+
+    # Leak guard: forecast is admissible only if its cycle was BEFORE t.
+    # If cycle_utc >= target timestamp, null that row's forecast values.
+    mask_ok = pd.to_datetime(h_15["cycle_utc"], utc=True, errors="coerce") < target_index
+    for c in ("tx_mean_t2m_k", "tx_max_t2m_k", "tx_mean_wind10m_mps"):
+        vals = h_15[c].where(mask_ok)
+        df[f"hrrr_{c}"] = vals.to_numpy()
     return df
 
 
