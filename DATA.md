@@ -11,9 +11,13 @@ See [DECISIONS.md](DECISIONS.md). Leaning ERCOT; CAISO is the alternative.
 ## 2. Sources
 
 ### 2.1 ERCOT
-- **RTM LMPs (Real-Time Market, Settlement Point Prices)** — 5-min granularity.
-  Source: ERCOT public reports (MIS). Typical publication lag: minutes to ~1
-  interval after interval end.
+- **RTM SPPs (Real-Time Market Settlement Point Prices)** — **15-minute**
+  granularity (one price per 15-min settlement interval, not 5-min). This is
+  the price a battery operator actually gets paid; 5-min SCED LMPs are
+  dispatch signals, not settlement prices. Source: ERCOT MIS report
+  NP6-785-ER. Historical archive begins 2011-01-01. Covers 7 hubs + 8 load
+  zones. Accessed via `gridstatus.Ercot.get_rtm_spp(year=YYYY)` and cached
+  to `data/raw/ercot/rtm_spp_<year>.parquet`.
 - **DAM LMPs (Day-Ahead Market)** — hourly. Cleared ~10:30 CPT day before.
 - **Load (system-wide and by zone)** — 5-min actual, published with lag.
   Also day-ahead load *forecast* — use this as a training feature, not actual.
@@ -44,7 +48,8 @@ Starter table (to be verified against current ISO documentation before use):
 
 | Feature                          | Granularity | Publication delay (approx) |
 |----------------------------------|-------------|----------------------------|
-| ERCOT RTM LMP                    | 5 min       | ~5–10 min after interval   |
+| ERCOT RTM SPP (settlement price) | 15 min      | ~15–30 min after interval  |
+| ERCOT SCED LMP (dispatch signal) | 5 min       | ~5–10 min after interval   |
 | ERCOT DAM LMP                    | hourly      | available ~10:30 CPT D−1   |
 | ERCOT system load actual         | 5 min       | ~5–15 min                  |
 | ERCOT system load DA forecast    | hourly      | available ~D−1 morning     |

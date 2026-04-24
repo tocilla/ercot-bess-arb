@@ -21,6 +21,7 @@ cvxpy>=1.5
 requests>=2.31
 httpx>=0.27
 python-dotenv>=1.0
+gridstatus>=0.30       # ERCOT/CAISO/etc. public data client
 
 # Exploration / viz
 matplotlib>=3.8

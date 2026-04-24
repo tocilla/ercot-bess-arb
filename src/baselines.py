@@ -4,10 +4,17 @@ These produce a grid_power_mw schedule aligned with a price series. Execution
 is handled by `dispatch.run_dispatch`.
 
 Included here:
-    - daily_oracle_schedule: the "natural spread" floor (PLAN §6.1). Uses
+    - daily_oracle_schedule: the "natural-spread" floor (PLAN §6.1). Uses
       REALIZED prices to charge at each day's cheapest intervals and discharge
-      at each day's most expensive. This is an oracle — not a strategy, but the
-      reference floor for how much revenue lives in the raw daily spread.
+      at each day's most expensive, up to a cycle budget. It is NOT a
+      perfect-foresight optimum (no LP, no skip on unprofitable days); it is
+      the mechanical reference floor that answers "how much revenue lives in
+      the raw daily spread?" On flat-price days it can lose money by paying
+      round-trip + degradation costs on a spread that doesn't cover them —
+      that's intentional: the baseline is a floor, not a strategy.
+
+    A true perfect-foresight dispatch (the ceiling) will be added later via
+    LP, and unlike this baseline, it will skip cycles on unprofitable days.
 
 Placeholders for later (§6.2, §6.3):
     - persistence, seasonal_naive: forecast-driven, not yet implemented.
