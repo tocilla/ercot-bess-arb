@@ -50,3 +50,20 @@ class LGBMForecaster:
 def lgbm_fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
     """Fit factory usable with `walk_forward_predict`."""
     return LGBMForecaster().fit(X, y)
+
+
+def make_quantile_fit_fn(alpha: float, num_iterations: int = 300):
+    """Return a fit_fn that trains an LGBM with quantile objective at
+    quantile `alpha` (0 < alpha < 1). Use alpha=0.5 for median, 0.1 for
+    lower tail, 0.9 for upper tail.
+    """
+    params = dict(DEFAULT_PARAMS)
+    params["objective"] = "quantile"
+    params["alpha"] = alpha
+    params["num_iterations"] = num_iterations
+
+    def fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
+        return LGBMForecaster(params=params).fit(X, y)
+
+    fit_fn.__name__ = f"lgbm_q{int(alpha * 100):02d}_fit_fn"
+    return fit_fn

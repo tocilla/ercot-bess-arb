@@ -43,6 +43,93 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — Quantile LightGBM + forecast-gated dispatch
+
+**Config:** three LightGBM quantile fits (tau = 0.1, 0.5, 0.9), 200 iters
+each, walk-forward monthly. Features: 20 cols (prices + load lags +
+calendar). Script: `scripts/run_quantile.py`.
+
+**Data:** HB_NORTH validation window (791 days).
+
+**Quantile forecast metrics:**
+- q10 pinball loss: 7.00
+- q50 pinball loss: 29.32 (same ballpark as L1 MAE \$58)
+- q90 pinball loss: 37.71
+- **80% prediction-interval coverage: 77.0%** (vs target 80.0%)
+- Mean q90−q10 width: \$51.75
+
+Coverage is close to nominal; the model is mildly over-confident on
+interval width but substantially accurate. The interval is useful.
+
+**Dispatch comparison (val):**
+
+| Rank | Strategy                        | Revenue    | % ceiling | Sharpe | Worst day   | Lift vs floor |
+|------|---------------------------------|------------|-----------|--------|-------------|---------------|
+| 1    | perfect_foresight_ceiling       | \$19.27M   | 100.0%    | 0.27   | \$0         | +\$2.51M      |
+| 2    | natural_spread_floor            | \$16.77M   | 87.0%     | 0.21   | −\$830,710  | 0             |
+| 3    | **q50 + forecast-gate**         | \$10.28M   | **53.3%** | **0.34** | **−\$8,991** | −\$6.49M    |
+| 4    | q50 alone (threshold dispatch)  | \$7.99M    | 41.5%     | 0.12   | −\$1.36M    | −\$8.77M      |
+| 5    | q_spread_gate (explicit q90-q10)| \$7.99M    | 41.5%     | 0.12   | −\$1.36M    | −\$8.77M      |
+
+**The key finding — dispatch gating matters more than quantile width:**
+
+1. **q50 + forecast-gate is the best forecast-driven result of the
+   session.** 53.3% of ceiling vs. 47.6% (L1 LGBM + load) and 41.6%
+   (L1 LGBM prices only). The technique: let the forecaster simulate
+   its own day's schedule against its own predictions; if the predicted
+   net is ≤ 0, skip that day entirely. No quantile knowledge required
+   for this lift — the point forecast alone is enough to gate.
+
+2. **Sharpe doubles and the worst day improves 100×.** 0.34 vs 0.18
+   (LGBM+load), worst day −\$9k vs −\$1.36M. For any operator that
+   reports risk-adjusted metrics or drawdown-sensitive covenants, this
+   is a bigger win than the headline revenue number suggests.
+
+3. **The explicit q90−q10 gate didn't trigger once.** Breakeven spread
+   I computed (~\$9/MWh) is well below every day's predicted spread
+   because the q90 of afternoon prices is always non-trivially above
+   the q10 of morning prices. To make quantile width actionable, we
+   need a tighter gate — e.g. compare predicted net revenue intervals
+   rather than raw price spreads, or require the *lower bound* of
+   predicted revenue to clear costs.
+
+4. **Quantile forecasts have latent value we didn't exploit here.**
+   Good 80% coverage means q10/q90 are informative about uncertainty.
+   A proper exploitation — CVaR-adjusted dispatch, conformalized
+   prediction bands used to size daily cycle — would likely extract
+   more lift. Explicit TODO.
+
+**What broke / what surprised me:**
+- Forecast-gated q50 dispatches on only a subset of days and yet earns
+  nearly as much as q50 on all days. The days it skips are systematically
+  loss-making — the point forecaster *can* tell when it's unconfident,
+  it just doesn't have to be told via quantiles.
+- Per-day LGBM quantile fits are ~3 min each on val (200 iters × 27
+  refits × 3 quantiles = 10 min total). Acceptable; would need to be
+  amortized if scaling to test or full-history.
+
+**Revised ranking of what's been tried on val (best → worst revenue):**
+
+| Strategy                             | Revenue    | % ceiling | Lift vs floor |
+|--------------------------------------|------------|-----------|---------------|
+| perfect_foresight_ceiling            | \$19.27M   | 100.0%    | +\$2.51M      |
+| natural_spread_floor                 | \$16.77M   | 87.0%     | 0             |
+| q50 + forecast-gate                  | \$10.28M   | 53.3%     | −\$6.49M      |
+| LGBM + load features                 | \$9.17M    | 47.6%     | −\$7.60M      |
+| Scarcity classifier + rule (worse)   | \$8.65M    | 44.9%     | −\$8.11M      |
+| LGBM prices-only                     | \$8.03M    | 41.6%     | −\$8.74M      |
+| q50 only (no gate)                   | \$7.99M    | 41.5%     | −\$8.77M      |
+| Scarcity oracle + rule               | \$4.55M    | 23.6%     | −\$12.22M     |
+
+**Next:**
+1. Combine the two best ideas: LGBM + load features + forecast-gate +
+   scarcity-probability as a FEATURE (not a switch). Expect further lift.
+2. Proper quantile-based CVaR dispatch.
+3. Exogenous wind/solar — would need EIA-930 or a forecast archive.
+4. Only after the above beats the floor convincingly: touch the test set.
+
+---
+
 ### 2026-04-24 — Scarcity-day classifier + rule-based dispatch (honest negative result)
 
 **Config:** binary LightGBM (is_unbalance=True, AP metric) trained
