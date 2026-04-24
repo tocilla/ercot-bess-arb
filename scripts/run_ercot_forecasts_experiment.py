@@ -3,8 +3,12 @@
 Uses truncated training (2019-01-01+) and forecast-gated dispatch — the
 session-best setup. Shared val window 2020-11-01 → 2022-12-31.
 
-    Baseline:  prices + load + EIA-930           (27 features; 56.4% ceiling)
-    +ERCOT:    baseline + STWPF + STPPF           (29 features; measuring)
+Multi-seed: each variant runs over multiple LGBM seeds (default 5).
+Reports mean ± std for both arms so the head-to-head delta can be
+compared against seed noise (~±2.84 pp baseline std, see FINDINGS).
+
+    Baseline:  prices + load + EIA-930
+    +ERCOT:    baseline + STWPF + STPPF
 """
 
 from __future__ import annotations
@@ -41,6 +45,8 @@ DEFAULT_SPEC = BatterySpec(
     soc_min_frac=0.05, soc_max_frac=0.95, initial_soc_frac=0.5,
     degradation_cost_per_mwh=2.0,
 )
+
+DEFAULT_SEEDS = (7, 13, 23, 42, 101)
 
 
 def schedule_from_fcst(fcst: pd.Series, spec, dt, tz):
@@ -83,10 +89,22 @@ def main() -> None:
     print(f"  solar forecasts: {len(solar_fcst):,} rows from "
           f"{len(set(solar_fcst['doc_id'])) if len(solar_fcst) else 0} docs")
 
-    fit_fn = make_quantile_fit_fn(alpha=0.5, num_iterations=200)
     dt = INTERVAL_MINUTES / 60.0
     spec = DEFAULT_SPEC
     train_start = pd.Timestamp("2019-01-01", tz="UTC")
+    window_prices = prices.loc[test_start:test_end]
+    floor_rev = float(run_dispatch(
+        daily_oracle_schedule(window_prices, spec, dt,
+                              cycles_per_day=1.0, tz=tz),
+        window_prices, spec, dt,
+    )["net_revenue"].sum())
+    ceil_rev = float(run_dispatch(
+        perfect_foresight_schedule(window_prices, spec, dt,
+                                   cycles_per_day_cap=1.0, tz=tz),
+        window_prices, spec, dt,
+    )["net_revenue"].sum())
+    print(f"\nfloor:   ${floor_rev:,.2f}")
+    print(f"ceiling: ${ceil_rev:,.2f}\n")
 
     variants: dict[str, dict] = {
         "baseline (EIA only)": {
@@ -99,73 +117,82 @@ def main() -> None:
         },
     }
 
-    results: dict[str, dict] = {}
+    seeds = DEFAULT_SEEDS
+    rows: list[dict] = []
     for name, kw in variants.items():
         if ("ERCOT" in name and kw["ercot_wind_forecasts"] is None
                 and kw["ercot_solar_forecasts"] is None):
-            print(f"\n--- {name}: SKIPPED (no ERCOT forecasts cached)")
+            print(f"--- {name}: SKIPPED (no ERCOT forecasts cached)")
             continue
-        print(f"\n--- {name} ---")
+        print(f"=== {name} ===")
         feats = build_features(prices, tz=tz, load=load_series, eia=eia, **kw)
         feat_cols = [c for c in feats.columns if c != "target"]
-        print(f"  feature cols ({len(feat_cols)})")
+        print(f"  feature cols: {len(feat_cols)}")
         if "ercot_stwpf_system_wide" in feats.columns:
-            nan_w = feats["ercot_stwpf_system_wide"].isna().mean() * 100
-            print(f"  STWPF NaN rate: {nan_w:.1f}%")
+            print(f"  STWPF NaN rate: "
+                  f"{feats['ercot_stwpf_system_wide'].isna().mean() * 100:.1f}%")
         if "ercot_stppf_system_wide" in feats.columns:
-            nan_s = feats["ercot_stppf_system_wide"].isna().mean() * 100
-            print(f"  STPPF NaN rate: {nan_s:.1f}%")
+            print(f"  STPPF NaN rate: "
+                  f"{feats['ercot_stppf_system_wide'].isna().mean() * 100:.1f}%")
 
-        t0 = time.time()
-        preds = walk_forward_predict(
-            feats, "target", fit_fn,
-            test_start=test_start, test_end=test_end,
-            retrain_every_days=retrain_every_days,
-            min_train_rows=96 * 14,
-            allow_nan_features=True,
-            train_start=train_start,
-        )
-        mask = ((preds.index >= test_start) & (preds.index <= test_end)
-                & preds.notna())
-        y_true = prices.loc[mask].values
-        y_pred = preds.loc[mask].values
-        mae = float(np.mean(np.abs(y_true - y_pred)))
-        rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+        for seed in seeds:
+            t0 = time.time()
+            fit_fn = make_quantile_fit_fn(alpha=0.5, num_iterations=200, seed=seed)
+            preds = walk_forward_predict(
+                feats, "target", fit_fn,
+                test_start=test_start, test_end=test_end,
+                retrain_every_days=retrain_every_days,
+                min_train_rows=96 * 14,
+                allow_nan_features=True,
+                train_start=train_start,
+            )
+            mask = ((preds.index >= test_start) & (preds.index <= test_end)
+                    & preds.notna())
+            y_true = prices.loc[mask].values
+            y_pred = preds.loc[mask].values
+            mae = float(np.mean(np.abs(y_true - y_pred)))
+            window_preds = preds.loc[test_start:test_end]
+            sched = schedule_from_fcst(window_preds, spec, dt, tz)
+            revenue = float(run_dispatch(sched, window_prices, spec, dt)["net_revenue"].sum())
+            pc = pct_of_ceiling(revenue, ceil_rev)
+            rows.append({"variant": name, "seed": seed, "revenue": revenue,
+                         "pct_ceiling": pc, "mae": mae})
+            print(f"  seed {seed:3d}: revenue=${revenue:>14,.2f}  "
+                  f"pct={pc:>5.2f}%  MAE=${mae:.2f}  ({time.time() - t0:.0f}s)")
 
-        window_preds = preds.loc[test_start:test_end]
-        window_prices = prices.loc[test_start:test_end]
-        sched = schedule_from_fcst(window_preds, spec, dt, tz)
-        res = run_dispatch(sched, window_prices, spec, dt)
-        revenue = float(res["net_revenue"].sum())
-        results[name] = {"revenue": revenue, "mae": mae, "rmse": rmse}
-        print(f"  MAE=${mae:.2f}  RMSE=${rmse:.2f}  revenue=${revenue:,.2f}  "
-              f"({time.time() - t0:.0f}s)")
+    if not rows:
+        print("\nNo runs completed.")
+        return
 
-    window_prices = prices.loc[test_start:test_end]
-    floor = run_dispatch(
-        daily_oracle_schedule(window_prices, spec, dt,
-                              cycles_per_day=1.0, tz=tz),
-        window_prices, spec, dt,
-    )
-    floor_rev = float(floor["net_revenue"].sum())
-    ceil = run_dispatch(
-        perfect_foresight_schedule(window_prices, spec, dt,
-                                   cycles_per_day_cap=1.0, tz=tz),
-        window_prices, spec, dt,
-    )
-    ceil_rev = float(ceil["net_revenue"].sum())
+    df = pd.DataFrame(rows)
+    print("\n=== Per-seed table ===")
+    print(df.to_string(index=False, float_format=lambda x: f"{x:,.2f}"))
 
-    print("\n=== Summary ===")
-    print(f"{'variant':30s} {'revenue':>15s} {'% ceiling':>10s} "
-          f"{'lift vs floor':>16s} {'MAE':>10s}")
-    print(f"{'floor':30s} ${floor_rev:>14,.2f} {87.0:>9.1f}%")
-    print(f"{'ceiling':30s} ${ceil_rev:>14,.2f} {100.0:>9.1f}% "
-          f"${ceil_rev - floor_rev:>+15,.2f}")
-    for name, r in results.items():
-        pc = pct_of_ceiling(r["revenue"], ceil_rev)
-        lift = r["revenue"] - floor_rev
-        print(f"{name:30s} ${r['revenue']:>14,.2f} {pc:>9.1f}% "
-              f"${lift:>+15,.2f} {r['mae']:>9.2f}")
+    print("\n=== Mean ± std by variant ===")
+    print(f"floor:   ${floor_rev:,.2f}  (87.0% of ceiling)")
+    print(f"ceiling: ${ceil_rev:,.2f}\n")
+    for variant in df["variant"].unique():
+        sub = df[df["variant"] == variant]
+        mean_rev = sub["revenue"].mean()
+        std_rev = sub["revenue"].std()
+        mean_pc = sub["pct_ceiling"].mean()
+        std_pc = sub["pct_ceiling"].std()
+        mean_mae = sub["mae"].mean()
+        std_mae = sub["mae"].std()
+        print(f"{variant:30s} revenue=${mean_rev:,.0f} ± ${std_rev:,.0f}  "
+              f"pct={mean_pc:.2f} ± {std_pc:.2f} pp  "
+              f"MAE=${mean_mae:.2f} ± ${std_mae:.2f}")
+
+    if df["variant"].nunique() == 2:
+        v1, v2 = df["variant"].unique()
+        s1 = df[df["variant"] == v1]
+        s2 = df[df["variant"] == v2]
+        delta_pp = s2["pct_ceiling"].mean() - s1["pct_ceiling"].mean()
+        pooled_std = ((s1["pct_ceiling"].std() + s2["pct_ceiling"].std()) / 2)
+        print(f"\nDelta ('{v2}' − '{v1}'): {delta_pp:+.2f} pp of ceiling")
+        print(f"Pooled std: {pooled_std:.2f} pp  →  effect/noise ≈ "
+              f"{(delta_pp / pooled_std) if pooled_std > 0 else float('inf'):.2f}σ")
+        print("Treat as real if |Δ| ≥ 2σ AND signs of individual seed deltas agree.")
 
 
 if __name__ == "__main__":
