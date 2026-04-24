@@ -43,6 +43,95 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — perfect-foresight LP ceiling, HB_NORTH 2011–2024
+
+**Config:** default battery (100 MW / 200 MWh / η=0.85 / $2/MWh deg), 1 cycle/day,
+`tz=US/Central`. Script: `scripts/run_baselines_real.py`. Solver: HIGHS.
+
+**Data:** same as previous entry — HB_NORTH RTM SPP, 2011–2024, 490,943
+intervals, 5,114 days.
+
+**What:** added perfect-foresight LP dispatch as the **ceiling** (METHODOLOGY
+§5.2). Per-day LP with SOC carried across days, total battery-side
+throughput ≤ 2 × cycles_per_day × usable. Also added regime breakdown
+(normal / scarcity-only / negative-only / both).
+
+**How:** cvxpy + HIGHS, one LP per local day. 5,114 LPs solve in ~64s on
+full history — about 12ms per day's LP. Throughput capped by the same
+rule as the floor baseline for apples-to-apples comparison.
+
+**Headline numbers:**
+
+| Strategy                  | Total revenue | Mean $/day | Std $/day | Worst day | Best day   | Sharpe | % clipped |
+|---------------------------|---------------|------------|-----------|-----------|-----------|--------|-----------|
+| natural-spread floor      | \$73.22M      | \$14,317   | \$67,090  | -\$830,710| +\$1,498,801 | 0.21   | 2.85%     |
+| perfect-foresight ceiling | **\$81.31M**  | \$15,900   | \$66,277  | **\$0**   | +\$1,489,748 | 0.24   | 0.99%     |
+
+**Floor captures 90.0% of ceiling.** Headroom = \$8.1M over 14 years,
+i.e. **\$5.8/kW-yr** on a 100 MW battery — the absolute maximum any
+dispatch strategy can earn *above* the mechanical floor.
+
+**Regime breakdown (where is the money actually earned):**
+
+| Regime         | Days | % days | Floor revenue | % of total | Ceiling revenue | % of total |
+|----------------|------|--------|---------------|------------|-----------------|------------|
+| Scarcity only  | 383  | 7.5%   | \$48.30M      | **66.0%**  | \$53.13M        | **65.3%**  |
+| Normal         | 4175 | 81.6%  | \$20.21M      | 27.6%      | \$23.18M        | 28.5%      |
+| Negative only  | 536  | 10.5%  | \$3.24M       | 4.4%       | \$3.54M         | 4.4%       |
+| Scarcity + neg | 20   | 0.4%   | \$1.46M       | 2.0%       | \$1.46M         | 1.8%       |
+
+Scarcity is defined as `max_price_on_day > \$500`. Negative as
+`min_price_on_day < 0`.
+
+**What this means — revised ML plan:**
+
+1. **The ML opportunity is narrow.** Floor already captures 90% of ceiling.
+   Any forecasting model must beat the floor by a large fraction of the
+   \$5.8/kW-yr headroom to be worth the complexity. Hunting for MAE
+   improvements on normal days is fighting for scraps.
+
+2. **Scarcity events are 90% of the game.** 7.5% of days supply 66% of
+   revenue. A model that correctly *anticipates* scarcity — lets the
+   battery sit at full SOC the day before a heat dome or system outage —
+   captures most of the alpha. Models that fit well on normal-day noise
+   will look great on MAE but do nothing for revenue.
+
+3. **Floor's negative days are the clearest win.** Floor has worst day
+   -\$830k; ceiling has worst day \$0 (LP idles on unprofitable days).
+   A *skip-if-unprofitable* gate alone closes a large piece of the gap —
+   no forecasting required, just a spread-vs-cost check using the daily
+   price range we'd have anyway.
+
+4. **Published "BESS ML" revenue numbers are largely spread capture.**
+   Any paper that reports impressive \$/MWh-day without comparing to the
+   natural-spread floor is overstating ML's contribution.
+
+**What broke / what surprised me:**
+- First LP formulation had a closure constraint (`soc_end = soc_start` per
+  day) which made the LP *strictly more restrictive* than the floor
+  baseline and caused LP < floor — confusing. Removed closure; added
+  explicit cross-day SOC carry-over via a simulator state tracker. Now
+  LP always ≥ floor as it should.
+- Initial cycle-cap was charge-side only (`sum(eta·p_c·dt) ≤ cycles·usable`).
+  With initial SOC at 50%, the LP could drain initial SOC for free on day
+  1 without counting against the cycle. Changed to total battery-side
+  throughput cap (`sum(eta·p_c + p_d/eta)·dt ≤ 2·cycles·usable`),
+  matching the physical definition of "1 cycle = once in + once out".
+- Floor's clipping rate (2.85%) is meaningfully higher than ceiling's
+  (0.99%). The baseline's blind cycling occasionally hits SOC limits the
+  LP avoids.
+
+**Next:**
+1. Regime-stratified baselines — how does floor perform if we add a
+   *skip-if-unprofitable* gate? Probably recovers most of the ceiling's
+   advantage, setting a tougher bar for ML.
+2. First forecasting baselines (persistence, seasonal-naive).
+3. Walk-forward evaluation harness.
+4. First ML model (LightGBM with lags + calendar), scored against floor
+   and headroom-capture not just MAE.
+
+---
+
 ### 2026-04-24 — natural-spread baseline, HB_NORTH 2011–2024
 
 **Config:** default battery (100 MW / 200 MWh / η=0.85 / $2/MWh deg), 1 cycle/day,
