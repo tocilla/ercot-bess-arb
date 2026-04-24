@@ -37,7 +37,29 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Copy the env template and fill in keys where you have them.
+cp .env.example .env
+# Edit .env in your editor.
 ```
+
+### Environment variables
+
+See [.env.example](.env.example) for the full template. Summary of what's
+required for each data module:
+
+| Module                       | Env vars needed                                                    |
+|------------------------------|--------------------------------------------------------------------|
+| ERCOT RTM SPPs (prices)      | none (anonymous MIS archive)                                       |
+| ERCOT historical load        | none (anonymous)                                                   |
+| EIA-930 (demand + gen-fuel)  | `EIA_API_KEY`                                                      |
+| FRED (gas prices)            | none (direct CSV endpoint)                                         |
+| NOAA HRRR (weather forecast) | none (anonymous S3 — `boto3` with UNSIGNED config)                 |
+| ERCOT Public API (forecasts) | `ERCOT_API_USERNAME`, `ERCOT_API_PASSWORD`, `ERCOT_API_SUBSCRIPTION_KEY` |
+| ERA5 (weather actuals)       | `CDSAPI_URL`, `CDSAPI_KEY` — optional, phase 3                     |
+
+`.env` is gitignored. Never paste keys into issues, PRs, or chat
+transcripts; regenerate if you do.
 
 ## Running
 

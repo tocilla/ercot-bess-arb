@@ -22,6 +22,9 @@ requests>=2.31
 httpx>=0.27
 python-dotenv>=1.0
 gridstatus>=0.30       # ERCOT/CAISO/etc. public data client
+herbie-data>=2025.0    # HRRR / GFS / NDFD from NOAA S3 (anonymous)
+xarray>=2024.1         # Pulled by herbie; listed for clarity
+cfgrib>=0.9            # GRIB2 → xarray; pulls eccodes
 
 # Exploration / viz
 matplotlib>=3.8
