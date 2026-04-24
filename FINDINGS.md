@@ -43,6 +43,87 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-24 — LightGBM walk-forward on validation window
+
+**Config:** default battery (100 MW / 200 MWh). Split per
+`configs/splits.yaml` (train 2011-01-01→2020-10-31, val
+2020-11-01→2022-12-31). Monthly refit. LightGBM L1 objective, 500 iters,
+default hyperparameters (no tuning yet). Features: 7 lag columns (15min,
+1h, 4h, 1d, 2d, 1w, 2w), 3 rolling stats (1d mean+std, 1w mean), 5
+calendar features. Script: `scripts/run_lgbm_walkforward.py`.
+
+**Data:** HB_NORTH RTM SPP, validation window = 791 days, 75,940 intervals.
+
+**What:** first fitted ML model evaluated under proper walk-forward
+discipline. Monthly retrains; predictions at time *t* use only data
+from strictly before the most recent retrain boundary. Forecasts feed
+into the same threshold-rule dispatch (charge in predicted-cheapest
+intervals, discharge in predicted-most-expensive).
+
+**Results on validation window:**
+
+| Strategy               | Revenue       | % ceiling | Lift vs floor |
+|------------------------|---------------|-----------|----------------|
+| perfect_foresight (val)| \$19.27M      | 100.0%    | +\$2.51M       |
+| natural_spread_floor   | \$16.77M      | **87.0%** | 0              |
+| lgbm_walkforward       | \$8.03M       | 41.6%     | **−\$8.74M**   |
+
+**Forecast quality (val):** MAE \$57.68, RMSE \$605.42, n = 75,940.
+
+**What this confirms:**
+
+1. **LightGBM with lag+calendar features does not beat the floor.**
+   It captures 41.6% of ceiling — about the same as persistence (39.7%)
+   and seasonal-naive (42.5%) on the full history. Refitting monthly did
+   not change the fundamental picture: without information beyond
+   historical prices, forecast-driven dispatch destroys value compared
+   to the mechanical oracle.
+
+2. **Point-forecast accuracy is not the right target.** MAE of ~\$58 on a
+   mean-\$41 market sounds decent. But RMSE is \$605 — errors are heavy-
+   tailed, and the big misses are *precisely* on scarcity days where
+   revenue lives. A model optimizing MAE learns the low-volatility
+   central tendency well and misses the tail entirely.
+
+3. **The ML path forward is not "bigger model" — it's "different
+   features."** Price history alone cannot predict the events that
+   drive 66% of revenue. To beat the floor, the forecaster needs
+   exogenous information that actually encodes tail-risk: forecasted
+   load vs capacity margin, wind/solar forecast error distributions,
+   temperature extremes, outage reports, real-time operating reserves.
+   Without these, additional modeling effort on the same features will
+   return diminishing noise.
+
+**What broke / what surprised me:**
+- RMSE (\$605) being 10× MAE (\$58) is the smoking gun for tail-error
+  insensitivity under L1. Switching to L2 (squared error) might make
+  the number look better but wouldn't fix the fundamental feature-
+  coverage gap. Documented but not pursued.
+- Walk-forward took 382s for 791 days of 30-day refits (~27 retrains).
+  LightGBM fitting is fast enough that this is not a blocker for
+  iteration, but probabilistic methods (quantile regression per
+  forecast) would need reconsideration.
+- LGBM's worst day was −\$1,354,759 — worse than persistence's
+  −\$1,757,514 by a hair, but of the same order. Bad forecasts on
+  tail-event days turn into catastrophic dispatch errors.
+
+**Next (revised priority):**
+1. **Exogenous features.** Add ERCOT load forecasts (STLF), renewable
+   forecasts (STWPF / STPPF), and basic weather (ERA5 temperature
+   anomalies by zone). This is the material lever on scarcity prediction.
+2. **Scarcity classification as a separate problem.** Train a binary/
+   multiclass model for "will there be a spike today?" and fold the
+   probability into dispatch (stay full going in, not cycling before).
+3. Probabilistic forecasts (quantile regression / LGBMLSS / conformal)
+   so dispatch can act on uncertainty.
+4. Hyperparameter tuning on validation only, after the new features
+   are in — tuning before exogenous features would just overfit the
+   central-tendency task that doesn't matter for revenue.
+
+**Test set status:** untouched. Per METHODOLOGY §1.
+
+---
+
 ### 2026-04-24 — forecast-driven baselines and gated floor, HB_NORTH 2011–2024
 
 **Config:** default battery (100 MW / 200 MWh / η=0.85 / \$2/MWh deg),

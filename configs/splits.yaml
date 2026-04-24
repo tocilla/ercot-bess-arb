@@ -1,0 +1,24 @@
+# Chronological train / validation / test splits for HB_NORTH 2011-2024.
+# Per METHODOLOGY.md §1: no random sampling, test set touched once.
+# Roughly 70% / 15% / 15% by time.
+# All timestamps are local (US/Central) date boundaries interpreted as the
+# start of that local day.
+
+location: HB_NORTH
+tz: US/Central
+
+train:
+  start: 2011-01-01
+  end: 2020-10-31   # inclusive
+
+val:
+  start: 2020-11-01
+  end: 2022-12-31   # inclusive
+
+test:
+  start: 2023-01-01
+  end: 2024-12-31   # inclusive
+
+# Walk-forward settings used on val (and later, test)
+walk_forward:
+  retrain_every_days: 30
