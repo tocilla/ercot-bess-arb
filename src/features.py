@@ -43,6 +43,8 @@ def build_features(
     scarcity_prob_daily: pd.Series | None = None,
     eia: pd.DataFrame | None = None,
     hrrr: pd.DataFrame | None = None,
+    ercot_wind_forecasts: pd.DataFrame | None = None,
+    ercot_solar_forecasts: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
@@ -101,7 +103,81 @@ def build_features(
     if hrrr is not None:
         df = _add_hrrr_features(df, prices.index, hrrr)
 
+    if ercot_wind_forecasts is not None or ercot_solar_forecasts is not None:
+        df = _add_ercot_forecast_features(
+            df, prices.index, tz or "UTC",
+            ercot_wind_forecasts, ercot_solar_forecasts,
+        )
+
     return df
+
+
+def _parse_delivery_ts(df: pd.DataFrame, tz: str) -> pd.DatetimeIndex:
+    """ERCOT reports use DELIVERY_DATE (local date, MM/DD/YYYY) + HOUR_ENDING
+    (1..24 or 25). Interval start = hour - 1 in local time. Handle DST via
+    DSTFlag when present.
+    """
+    date = pd.to_datetime(df["DELIVERY_DATE"], format="%m/%d/%Y")
+    hour_start = df["HOUR_ENDING"].astype(int) - 1
+    local = date + pd.to_timedelta(hour_start, unit="h")
+    # DST: ERCOT uses DSTFlag ('Y'/'N') on the repeated fall-back hour.
+    if "DSTFlag" in df.columns:
+        # ambiguous=True marks the FIRST occurrence (DST) of the repeated
+        # local hour; ambiguous=False is the second (standard).
+        ambiguous = (df["DSTFlag"].astype(str).str.upper() == "Y")
+        return local.dt.tz_localize(tz, ambiguous=ambiguous.to_numpy(),
+                                    nonexistent="shift_forward").dt.tz_convert("UTC")
+    return local.dt.tz_localize(tz, ambiguous="infer",
+                                nonexistent="shift_forward").dt.tz_convert("UTC")
+
+
+def _add_ercot_forecast_features(
+    df: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    tz: str,
+    wind: pd.DataFrame | None,
+    solar: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Add STWPF (wind) and STPPF (solar) features keyed by publish-time-
+    aware lookup: for each target t, use the forecast from the latest
+    document whose `post_datetime_utc < t`.
+    """
+    if wind is not None and not wind.empty:
+        df["ercot_stwpf_system_wide"] = _lookup_latest_forecast_by_valid(
+            wind, "STWPF_SYSTEM_WIDE", tz, target_index
+        )
+    if solar is not None and not solar.empty:
+        df["ercot_stppf_system_wide"] = _lookup_latest_forecast_by_valid(
+            solar, "STPPF_SYSTEM_WIDE", tz, target_index
+        )
+    return df
+
+
+def _lookup_latest_forecast_by_valid(
+    forecasts: pd.DataFrame,
+    value_col: str,
+    tz: str,
+    target_index: pd.DatetimeIndex,
+) -> np.ndarray:
+    """Build a per-`valid_utc` view with the latest publish whose
+    `post_datetime_utc < valid_utc`, then align to `target_index`.
+    """
+    f = forecasts.copy()
+    f["valid_utc"] = _parse_delivery_ts(f, tz)
+    f["post_datetime_utc"] = pd.to_datetime(f["post_datetime_utc"], utc=True)
+    # Only keep rows where the forecast was PUBLISHED before its valid time —
+    # past-hour rows in the doc are historical / not forecasts at publish.
+    f = f[f["post_datetime_utc"] < f["valid_utc"]]
+    # For each valid_utc, keep the newest publish.
+    f = f.sort_values(["valid_utc", "post_datetime_utc"])
+    f = f.drop_duplicates("valid_utc", keep="last")
+    series = f.set_index("valid_utc")[value_col]
+    # Reindex to the target grid, forward-fill up to 24h.
+    union = target_index.union(series.index)
+    aligned = series.reindex(union).sort_index().ffill(
+        limit=INTERVALS_PER_DAY
+    ).reindex(target_index)
+    return aligned.to_numpy()
 
 
 def _add_hrrr_features(

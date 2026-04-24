@@ -90,16 +90,35 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _get(endpoint: str, params: dict | None = None) -> dict:
-    """GET a Public API endpoint with auth + subscription key."""
+def _get(endpoint: str, params: dict | None = None, _retries: int = 5) -> dict:
+    """GET a Public API endpoint with auth + subscription key.
+
+    Retries on 401 (token refresh) and 429 (rate limit) with backoff.
+    """
     url = f"{_API_BASE}/{endpoint.lstrip('/')}"
-    r = requests.get(url, headers=_headers(), params=params, timeout=60)
-    if r.status_code == 401:
-        # Token may have expired between cache check and use. Force refresh.
-        _token_cache.clear()
+    last_err: Exception | None = None
+    backoff = 2.0
+    for attempt in range(_retries):
         r = requests.get(url, headers=_headers(), params=params, timeout=60)
-    r.raise_for_status()
-    return r.json()
+        if r.status_code == 401:
+            _token_cache.clear()
+            continue
+        if r.status_code == 429:
+            wait = float(r.headers.get("Retry-After", backoff))
+            logger.warning("429 rate-limited, sleeping %.1fs (attempt %d)",
+                           wait, attempt + 1)
+            time.sleep(wait)
+            backoff = min(backoff * 2, 60.0)
+            continue
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            last_err = e
+            break
+        return r.json()
+    if last_err:
+        raise last_err
+    raise RuntimeError(f"Exhausted retries on {url}")
 
 
 # ---------- High-level fetchers ----------
@@ -176,19 +195,33 @@ def list_archives(
     return df
 
 
-def download_archive(report_id: str, doc_id: int) -> bytes:
+def download_archive(report_id: str, doc_id: int, _retries: int = 5) -> bytes:
     """Download a single archive document's raw bytes (typically a ZIP
-    containing CSV)."""
-    import requests as _rq
+    containing CSV). Retries on 401 (token refresh) and 429 (rate limit)."""
     url = f"{_API_BASE}/archive/{report_id}"
-    r = _rq.get(url, headers=_headers(), params={"download": doc_id},
-                timeout=120)
-    if r.status_code == 401:
-        _token_cache.clear()
-        r = _rq.get(url, headers=_headers(), params={"download": doc_id},
-                    timeout=120)
-    r.raise_for_status()
-    return r.content
+    backoff = 2.0
+    last_err: Exception | None = None
+    for attempt in range(_retries):
+        r = requests.get(url, headers=_headers(),
+                         params={"download": doc_id}, timeout=120)
+        if r.status_code == 401:
+            _token_cache.clear()
+            continue
+        if r.status_code == 429:
+            wait = float(r.headers.get("Retry-After", backoff))
+            logger.warning("429 on download, sleeping %.1fs", wait)
+            time.sleep(wait)
+            backoff = min(backoff * 2, 60.0)
+            continue
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            last_err = e
+            break
+        return r.content
+    if last_err:
+        raise last_err
+    raise RuntimeError(f"Exhausted retries downloading doc {doc_id}")
 
 
 def download_archive_as_df(report_id: str, doc_id: int) -> pd.DataFrame:
