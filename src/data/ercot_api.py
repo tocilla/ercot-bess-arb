@@ -107,51 +107,43 @@ def _get(endpoint: str, params: dict | None = None) -> dict:
 @dataclass
 class EndpointSpec:
     report_id: str
-    path: str      # path suffix under /api/public-reports
     description: str
 
 
 ENDPOINTS: dict[str, EndpointSpec] = {
     "wind": EndpointSpec(
         report_id="NP4-732-CD",
-        path="np4-732-cd/wpp_hrly_avrg_actl_fcast",
         description="Wind Power Production: Hourly Averaged Actual + STWPF + WGRPP",
     ),
     "solar": EndpointSpec(
         report_id="NP4-737-CD",
-        path="np4-737-cd/spp_hrly_avrg_actl_fcast",
         description="Solar Power Production: Hourly Averaged Actual + STPPF",
     ),
     "load_forecast_7d": EndpointSpec(
         report_id="NP3-560-CD",
-        path="np3-560-cd/lf_by_model_weather_zone",
-        description="Seven-Day Load Forecast by Model and Weather Zone",
+        description="Seven-Day Load Forecast by Forecast Zone",
     ),
     "outage_capacity": EndpointSpec(
         report_id="NP3-233-CD",
-        path="np3-233-cd/hourly_res_outage_cap",
         description="Hourly Resource Outage Capacity (next 168h)",
     ),
 }
 
 
-def fetch_endpoint(
-    key: str,
+def list_archives(
+    report_id: str,
     post_datetime_from: pd.Timestamp | None = None,
     post_datetime_to: pd.Timestamp | None = None,
     page_size: int = 1000,
 ) -> pd.DataFrame:
-    """Fetch a Public API endpoint for a publish-time window.
+    """List archive documents (docId + post datetime) for a report.
 
-    The Public API key parameter for historical filtering is
-    `postDatetimeFrom` / `postDatetimeTo` — the timestamp at which the
-    report was *published*. This is exactly the "as-of" semantic we want
-    for vintaged features (METHODOLOGY §3).
+    The archive endpoint returns metadata — one row per time a report
+    was published. To get the actual data, call `download_archive(docId)`.
+
+    `postDatetimeFrom`/`postDatetimeTo` filter by the *publish* time,
+    which is exactly the "as-of" semantic we want (METHODOLOGY §3).
     """
-    if key not in ENDPOINTS:
-        raise KeyError(f"Unknown endpoint key: {key}. Available: {list(ENDPOINTS)}")
-    spec = ENDPOINTS[key]
-
     params: dict[str, str | int] = {"size": page_size}
     if post_datetime_from is not None:
         params["postDatetimeFrom"] = post_datetime_from.strftime("%Y-%m-%dT%H:%M:%S")
@@ -162,19 +154,74 @@ def fetch_endpoint(
     page = 1
     while True:
         params["page"] = page
-        payload = _get(spec.path, params=params)
-        fields = payload.get("fields", [])
-        rows = payload.get("data", [])
-        if not rows:
+        payload = _get(f"archive/{report_id}", params=params)
+        docs = payload.get("archives", [])
+        if not docs:
             break
-        col_names = [f["name"] for f in fields]
-        all_rows.extend([dict(zip(col_names, r)) for r in rows])
+        for d in docs:
+            all_rows.append({
+                "doc_id": d.get("docId"),
+                "friendly_name": d.get("friendlyName"),
+                "post_datetime": d.get("postDatetime"),
+            })
         meta = payload.get("_meta", {})
         total_pages = meta.get("totalPages", 1)
         if page >= total_pages:
             break
         page += 1
-    return pd.DataFrame(all_rows)
+
+    df = pd.DataFrame(all_rows)
+    if not df.empty:
+        df["post_datetime"] = pd.to_datetime(df["post_datetime"])
+    return df
+
+
+def download_archive(report_id: str, doc_id: int) -> bytes:
+    """Download a single archive document's raw bytes (typically a ZIP
+    containing CSV)."""
+    import requests as _rq
+    url = f"{_API_BASE}/archive/{report_id}"
+    r = _rq.get(url, headers=_headers(), params={"download": doc_id},
+                timeout=120)
+    if r.status_code == 401:
+        _token_cache.clear()
+        r = _rq.get(url, headers=_headers(), params={"download": doc_id},
+                    timeout=120)
+    r.raise_for_status()
+    return r.content
+
+
+def download_archive_as_df(report_id: str, doc_id: int) -> pd.DataFrame:
+    """Download an archive document and return the first CSV inside as a
+    DataFrame. Most ERCOT reports ship as a ZIP with one CSV."""
+    import io
+    import zipfile
+    data = download_archive(report_id, doc_id)
+    # Most responses are zipped CSV; some are raw CSV.
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = [n for n in z.namelist() if n.lower().endswith(".csv")]
+            if not names:
+                raise ValueError(f"No CSV inside ZIP for docId={doc_id}")
+            with z.open(names[0]) as f:
+                return pd.read_csv(f)
+    except zipfile.BadZipFile:
+        return pd.read_csv(io.BytesIO(data))
+
+
+def fetch_endpoint(
+    key: str,
+    post_datetime_from: pd.Timestamp | None = None,
+    post_datetime_to: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Convenience: list archives for a named endpoint in a publish-time
+    window. Use `download_archive_as_df` to fetch individual docs.
+    """
+    if key not in ENDPOINTS:
+        raise KeyError(f"Unknown endpoint key: {key}. Available: {list(ENDPOINTS)}")
+    return list_archives(ENDPOINTS[key].report_id,
+                         post_datetime_from=post_datetime_from,
+                         post_datetime_to=post_datetime_to)
 
 
 def smoke_test_auth() -> None:
