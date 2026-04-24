@@ -15,9 +15,10 @@ This document reconciles the gap and names concrete next sources.
 | ERCOT solar actual + forecast (vintaged STPPF) | ❌ missing → **can get** via ERCOT Public API | free | 1–2 days |
 | ERCOT resource outage capacity             | ❌ missing → **can get** via ERCOT Public API | free | 1 day  |
 | EIA-930 hourly demand + forecast + gen-by-fuel | ❌ missing → **can get** via EIA API | free  | 0.5–1 day |
-| ERA5 weather reanalysis (historical actuals) | ❌ missing → **can get** via Copernicus CDS | free | 1 day |
-| NOAA NDFD historical weather *forecasts*   | ⚠️ available via NCEI AIRS but heavy          | free | 2–3 days |
-| Natural gas prices (Henry Hub, Waha daily) | ❌ missing → **can get** via EIA / FRED API | free | 0.5 day |
+| ERA5 weather reanalysis (historical actuals) | ❌ missing → **can get** via Copernicus CDS (free, key required) | free | 1 day |
+| **HRRR historical weather *forecasts* (as-of)** | ❌ missing → **can get** from AWS S3 (anonymous, NO KEY) | free | 1 day |
+| NOAA NDFD historical weather *forecasts*   | ✅ on AWS S3 (anonymous, NO KEY) — GRIB2 parse | free | 2 days |
+| Natural gas prices (Henry Hub, Waha daily) | ❌ missing → **can get** via FRED CSV (NO KEY) or EIA API | free | 0.5 day |
 | GridStatus.io hosted API (backfilled)      | ⚠️ easier drop-in for most of the above       | free tier + paid | 0.5 day |
 
 **The punchline: most of what we thought was missing is actually free with
@@ -98,28 +99,43 @@ time *t* are produced using observations from around *t* (including
 some after *t*) — so they are not what a forecaster at time *t* would
 have seen. For honest walk-forward, ERA5 must be treated with a lag
 (e.g. yesterday's temperature as a proxy for today's weather
-conditions), not as a live feature. For a TRUE forecast history, use
-NDFD (below).
+conditions), not as a live feature. For a TRUE vintaged forecast
+history, use HRRR or NDFD from S3 (below) — free, no API key, and
+archived by cycle so you get exactly "what was the 15:00 Houston
+temperature forecast as of the 06:00 run".
 
 **Action:** register at Copernicus CDS, add `src/data/era5.py` with a
 cdsapi wrapper. Download Texas bbox per year, save as NetCDF/zarr.
 
-## 4. NDFD — historical NWS forecast archive
+## 4. NOAA model archives on S3 — true vintaged forecasts, no API key
 
-NOAA's National Digital Forecast Database archives the actual forecast
-grids the NWS published. Pre-2008 data requires the AIRS archive; post-
-2008 via S3 (`registry.opendata.aws/noaa-ndfd/`) and FTP. Format: GRIB2.
-Variables: temperature, wind, sky cover, precipitation probability.
+**HRRR (High-Resolution Rapid Refresh)** is the right primary source
+for ERCOT work. 3 km CONUS grid, hourly cycles, 18-hour forecast
+horizon (48h on the 00/06/12/18 cycles), archive since 2014. On AWS
+S3 as `noaa-hrrr-bdp-pds` — anonymous access, no API key, no cost.
+Key layout is exactly what you want: `<param>/<vertical>/YYYYMMDD/HHZ/FFF.grib2`
+so "what did the 06Z run predict for hour 09" is a direct S3 key.
 
-Unlike ERA5, NDFD contains true vintaged forecasts — "what did the
-weather service think about tomorrow, when yesterday at 6am?". This is
-the closest free analogue to the operator-side weather information.
+**GFS (Global Forecast System)** — 0.25° global, 4 cycles/day, forecast
+out to 384h. Bucket `noaa-gfs-bdp-pds`. Anonymous. Useful as backstop
+when HRRR misses a window.
 
-Effort: higher than ERA5. GRIB2 parsing, S3 key schema, temporal
-indexing. Plan on 2–3 days to integrate cleanly.
+**NDFD (National Digital Forecast Database)** — NWS-published forecast
+grids (what gets pushed to local weather offices). 2008+. AWS S3 and
+FTP. Anonymous. Useful for longer-horizon features than HRRR.
 
-**Action:** park for phase 3. Useful once we've validated that ERA5
-actuals add value.
+**Files are GRIB2.** Use `cfgrib` + `xarray`, or `pygrib`, to parse.
+For our use case, the per-cycle workflow is:
+  1. Pick cycle time (e.g. 06:00 CT — after ERCOT DAM closes).
+  2. Extract forecast hours F+3 … F+30 for the Texas bbox.
+  3. Aggregate to hourly per weather zone.
+  4. Persist to parquet keyed by `(publish_cycle, valid_time)`.
+
+Effort: ~1 day for HRRR alone (S3 + GRIB2), ~2 days with NDFD
+alongside. All free.
+
+**Action:** make HRRR the primary weather feature source. ERA5 stays
+as an "actuals" calibration against HRRR forecast error.
 
 ## 5. Natural gas — cheap signal, easy to add
 
@@ -140,6 +156,37 @@ as datasets, pre-parsed, through one consistent Python client
 
 This would collapse sections 1–2 into an afternoon of integration. Worth
 considering for a serious push but not necessary for phase 2.
+
+## 6b. Registration and access summary
+
+**Free registration — email and instant-ish key:**
+
+| Source              | Register at                                                          |
+|---------------------|-----------------------------------------------------------------------|
+| ERCOT Public API    | https://apiexplorer.ercot.com/                                        |
+| EIA Open Data API   | https://www.eia.gov/opendata/register.php                             |
+| Copernicus CDS (ERA5) | https://cds.climate.copernicus.eu/how-to-api                        |
+| GridStatus.io       | https://www.gridstatus.io/pricing                                     |
+| FRED                | https://fred.stlouisfed.org/docs/api/api_key.html                     |
+
+**No registration at all — anonymous HTTPS / S3:**
+
+| Source                        | Access                                                   |
+|-------------------------------|----------------------------------------------------------|
+| NOAA HRRR forecasts           | `s3://noaa-hrrr-bdp-pds` anonymous read                  |
+| NOAA GFS forecasts            | `s3://noaa-gfs-bdp-pds` anonymous read                   |
+| NOAA NDFD forecasts           | AWS Registry of Open Data, anonymous                     |
+| EIA bulk CSVs / ZIPs          | direct HTTPS, no key needed                              |
+| FRED CSV downloads            | `fredgraph.csv?id=<series>` direct HTTPS                 |
+| ERCOT MIS historical CSVs     | direct HTTPS (what gridstatus uses for prices + load)    |
+| ERCOT historical load ZIPs    | `https://www.ercot.com/gridinfo/load/load_hist`          |
+
+**Notes on the no-key paths:**
+- For S3, use `aws s3 cp --no-sign-request` or `s3fs`/`boto3` with
+  `config=botocore.UNSIGNED` — no AWS account required.
+- FRED's CSV URL pattern (`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DHHNGSP`)
+  returns plain CSV and is robust enough to script against.
+- EIA's bulk paths are documented at `https://www.eia.gov/opendata/bulkfiles.php`.
 
 ## 7. What we genuinely can't get (cheaply)
 
@@ -168,11 +215,14 @@ Ordered by expected revenue-lift-per-engineer-day:
    that generalizes to other ISOs. ~0.5 day.
 4. **Natural gas prices.** Cheap to add, real information content for
    thermal-dispatch marginal cost. ~0.5 day.
-5. **ERA5 temperature + wind.** Heat-wave and wind-ramp features. ~1 day.
+5. **HRRR weather forecasts from S3 (NO KEY).** Vintaged temperature,
+   wind at 80m, solar — the honest weather-forecast signal a live
+   operator would have had. ~1 day for GRIB2 setup + Texas bbox.
 6. **ERCOT resource outage capacity (NP3-233-CD).** Complement to the
    capacity margin story. ~0.5 day.
-7. **NDFD historical forecasts.** Only if we first prove ERA5 actuals
-   add value. ~2–3 days.
+7. **ERA5 actuals as calibration.** Only after HRRR is in — useful
+   for measuring HRRR's forecast error as a feature, not for
+   replacing HRRR. ~1 day.
 
 ## Expected ceiling if we executed all of #1–#6
 
