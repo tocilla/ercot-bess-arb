@@ -1,5 +1,12 @@
 # Battery Arbitrage on ERCOT / CAISO — Project Plan
 
+> **Note:** this is the original project charter, written before any
+> experiments ran. It records the framing and discipline we set out
+> with. For actual outcomes see [RESULTS.md](RESULTS.md); for the
+> experiment log see [FINDINGS.md](FINDINGS.md); for design decisions
+> made along the way see [DECISIONS.md](DECISIONS.md).
+
+
 ## 1. Goal
 Build an ML system that forecasts short-horizon electricity prices (LMPs) on a US
 ISO (ERCOT or CAISO) and produces a charge/discharge schedule for a simulated

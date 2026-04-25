@@ -4,9 +4,9 @@ Data sources, as-of semantics, publication delays, revisions, and schema.
 This is the most accident-prone part of the project — read carefully before
 adding any feature.
 
-## 1. Target ISO (to be decided)
+## 1. Target ISO
 
-See [DECISIONS.md](DECISIONS.md). Leaning ERCOT; CAISO is the alternative.
+ERCOT, HB_NORTH hub. Decision logged 2026-04-24 in [DECISIONS.md](DECISIONS.md).
 
 ## 2. Sources
 
