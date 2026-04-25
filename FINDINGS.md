@@ -43,6 +43,67 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Wind-only ERCOT STWPF as a feature: within noise, mildly negative
+
+**Config:** Same setup as session-best. Truncated training (2019+),
+forecast-gated dispatch. Compared two arms across 5 seeds (7, 13, 23,
+42, 101):
+- Baseline: prices + load + EIA-930 (27 features, the seed-stability
+  reference)
+- +ERCOT STWPF (wind): adds `ercot_stwpf_system_wide` from one daily
+  vintaged ERCOT publish (publish hour ≈ 06 UTC, day-ahead horizon)
+
+Solar (STPPF) **not yet included** — solar backfill still in progress
+at run time. This is the wind-only intermediate.
+
+**Per-seed results:**
+
+| Seed | Baseline % | +STWPF % | Δ pp |
+|------|-----------:|---------:|-----:|
+| 7    | 53.21      | 56.56    | +3.35 |
+| 13   | 57.95      | 55.44    | −2.51 |
+| 23   | 58.97      | 54.05    | −4.92 |
+| 42   | 57.31      | 55.92    | −1.39 |
+| 101  | 60.91      | 48.81    | −12.10 |
+
+**Mean ± std:**
+
+| Variant | Revenue | % ceiling | MAE |
+|---|---|---|---|
+| Baseline | \$11.12M ± \$548k | **57.67 ± 2.84 pp** | \$57.30 ± \$0.34 |
+| +STWPF | \$10.44M ± \$603k | **54.16 ± 3.13 pp** | \$57.29 ± \$0.36 |
+| **Delta** | −\$680k | **−3.51 pp** | basically zero |
+
+Effect/noise: **−1.18σ.** Below the 2σ "real-effect" threshold, but
+trending negative — 4 of 5 seeds individually showed wind hurt, only
+seed 7 helped. MAE didn't move.
+
+**What this tells us — provisional:**
+
+1. **Wind-forecast-only feature doesn't help and may mildly hurt.** Same
+   pattern observed previously with daily-resolution HRRR temperature.
+   A single value broadcast across 96 intraday intervals doesn't add
+   timing information the model lacks from price lags + load + calendar.
+
+2. **The seed dispersion grew slightly.** Adding a high-NaN feature
+   (66.7% of training rows lack STWPF — pre-2019 history is missing)
+   appears to add a touch more variance, which is consistent with the
+   model occasionally over-relying on it.
+
+3. **Don't conclude until +wind+solar is run.** Solar has a much
+   stronger daily-cycle shape than wind (zero overnight, peak midday).
+   It might be a more useful feature, or the combination might behave
+   differently. Hold judgment.
+
+**Decision logged for after solar backfill completes:**
+- If +wind+solar mean lift ≥ 5 pp → keep, expand to hourly vintage.
+- If +wind+solar lift < 2 pp or trending negative → confirms
+  daily-resolution exogenous forecasts don't help in this framing.
+  Move to "stop and write up" or try one targeted thing (e.g. ERCOT
+  load forecast NP3-560-CD) before stopping.
+
+---
+
 ### 2026-04-25 — Seed noise is big: ±2.8 pp of ceiling
 
 **Config:** Session-best ML setup — q50 LGBM + EIA features + 2019+

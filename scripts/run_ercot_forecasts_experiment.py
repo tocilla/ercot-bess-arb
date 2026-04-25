@@ -64,6 +64,14 @@ def schedule_from_fcst(fcst: pd.Series, spec, dt, tz):
 
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--no-solar", action="store_true",
+                    help="Ignore the solar cache (use even if partial).")
+    ap.add_argument("--no-wind", action="store_true",
+                    help="Ignore the wind cache.")
+    args = ap.parse_args()
+
     logging.basicConfig(level=logging.WARNING,
                         format="%(asctime)s %(levelname)s: %(message)s")
     with open("configs/splits.yaml") as f:
@@ -79,8 +87,8 @@ def main() -> None:
     prices = get_rtm_spp_series(cfg["location"], 2011, 2022)
     load_series = get_load_series(2011, 2022)["ercot_mw"]
     eia = load_eia_series(2019, 2022, respondent="ERCO")
-    wind_fcst = load_forecasts("wind")
-    solar_fcst = load_forecasts("solar")
+    wind_fcst = load_forecasts("wind") if not args.no_wind else pd.DataFrame()
+    solar_fcst = load_forecasts("solar") if not args.no_solar else pd.DataFrame()
     print(f"  prices: {len(prices):,}")
     print(f"  load:   {len(load_series):,}")
     print(f"  EIA:    {len(eia):,}")
