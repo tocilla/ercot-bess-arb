@@ -36,9 +36,13 @@ class LGBMForecaster:
     model: lgb.Booster | None = None
     feature_cols: list[str] | None = None
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "LGBMForecaster":
+    def fit(self, X: pd.DataFrame, y: pd.Series,
+            sample_weight: np.ndarray | None = None) -> "LGBMForecaster":
         self.feature_cols = list(X.columns)
-        dtrain = lgb.Dataset(X.to_numpy(), label=y.to_numpy(), feature_name=self.feature_cols)
+        dtrain = lgb.Dataset(
+            X.to_numpy(), label=y.to_numpy(),
+            weight=sample_weight, feature_name=self.feature_cols,
+        )
         self.model = lgb.train(self.params, dtrain)
         return self
 
@@ -52,12 +56,18 @@ def lgbm_fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
     return LGBMForecaster().fit(X, y)
 
 
-def make_quantile_fit_fn(alpha: float, num_iterations: int = 300,
-                         seed: int | None = None):
+def make_quantile_fit_fn(
+    alpha: float,
+    num_iterations: int = 300,
+    seed: int | None = None,
+    weight_fn: "Callable[[pd.DataFrame, pd.Series], np.ndarray] | None" = None,
+):
     """Return a fit_fn that trains an LGBM with quantile objective at
     quantile `alpha` (0 < alpha < 1). Use alpha=0.5 for median, 0.1 for
     lower tail, 0.9 for upper tail. Optional `seed` sets deterministic
-    bagging / feature-sampling for seed-stability analysis.
+    bagging / feature-sampling for seed-stability analysis. Optional
+    `weight_fn(X, y) → np.ndarray` produces per-sample weights for
+    decision-aware loss shaping (e.g. price-weighted MAE).
     """
     params = dict(DEFAULT_PARAMS)
     params["objective"] = "quantile"
@@ -71,8 +81,16 @@ def make_quantile_fit_fn(alpha: float, num_iterations: int = 300,
         params["deterministic"] = True
 
     def fit_fn(X: pd.DataFrame, y: pd.Series) -> LGBMForecaster:
-        return LGBMForecaster(params=dict(params)).fit(X, y)
+        weights = None
+        if weight_fn is not None:
+            weights = weight_fn(X, y)
+            # LGBM requires non-negative weights summing to > 0.
+            weights = np.maximum(weights, 0.0)
+            if weights.sum() == 0:
+                raise ValueError("weight_fn returned all-zero weights")
+        return LGBMForecaster(params=dict(params)).fit(X, y, sample_weight=weights)
 
     suffix = f"_s{seed}" if seed is not None else ""
-    fit_fn.__name__ = f"lgbm_q{int(alpha * 100):02d}{suffix}_fit_fn"
+    weight_tag = f"_w{weight_fn.__name__}" if weight_fn is not None else ""
+    fit_fn.__name__ = f"lgbm_q{int(alpha * 100):02d}{suffix}{weight_tag}_fit_fn"
     return fit_fn

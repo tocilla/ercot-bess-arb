@@ -43,6 +43,81 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Decision-aware loss weighting: clearly hurts (and tells us why)
+
+**Config:** Same model, same features, same val window, multi-seed (5).
+Four loss-weighting schemes compared, all sharing the q50 quantile
+objective and forecast-gate dispatch:
+
+| Variant | Weight per training row |
+|---|---|
+| A_uniform | 1.0 (baseline) |
+| B_devmean | \|y − daily_mean\| + 1 |
+| C_topbotk | 5.0 if row is in day's top-8 or bottom-8, else 1.0 |
+| D_pricemag | 1 + \|y\| / 100 |
+
+**Per-seed:**
+
+| Variant | mean % ceiling | std | mean MAE | Δ vs A | σ |
+|---|---:|---:|---:|---:|---:|
+| A_uniform | **57.67** | 2.84 pp | \$57.30 | — | — |
+| B_devmean | 2.87 | 6.04 pp | \$3.8M (broken) | **−54.80** | **−12.3σ** |
+| C_topbotk | 50.65 | 4.17 pp | \$55.17 | −7.03 | −2.0σ |
+| D_pricemag | 44.41 | 7.26 pp | \$57.71 | −13.26 | −2.6σ |
+
+**Every weighted variant lost decisively to uniform.** B_devmean was
+catastrophically broken — predictions on middle-of-day hours went
+wildly wrong (MAE in the millions on some seeds), revenue collapsed
+to near zero. C and D were both about 2σ negative.
+
+**The mechanism — and why this is the closing argument against
+decision-focused learning too:**
+
+The forecast-gate dispatch picks charge / discharge hours **by rank
+within each day**, not by absolute price level. To get the rank right,
+the model needs calibrated predictions across the entire daily
+distribution. The middle hours don't trigger dispatch directly, but
+they form the reference against which the extremes are ranked.
+
+Upweighting extreme hours during training:
+1. Pulls the model's predictions on the central distribution
+   off-target (the loss is no longer telling it those rows matter).
+2. The model becomes well-calibrated on the rare rows but poorly
+   calibrated everywhere else.
+3. The intra-day rank order breaks: a model that predicts \$80 for the
+   true peak hour but \$70 for a middle hour (vs the previous \$60) is
+   no better at picking the peak than uniform — and may be worse if
+   the inflated middle hours rank above the true peak on a flat day.
+
+**This generalizes to full decision-focused learning.** The differentiable
+surrogate (soft argmax, top-k attention) likewise pushes gradient
+signal toward the extremes. The result is the same kind of calibration
+distortion. We've gotten 1σ of empirical evidence (weighted loss) plus
+strong mechanistic reasoning that the rank-based nature of the dispatch
+is hostile to any loss-shape that emphasizes extremes.
+
+**Decision: this branch is exhausted.** Per the plan documented earlier:
+
+> Step 1 if price-weighted MAE doesn't help → "DFL probably won't either"
+> → go to Step 4 (stop and write up)
+
+We're in Step 4. The remaining ML moves not yet tried — hourly-vintage
+forecasts, real-time outage data — both require new data acquisition,
+not new models. Daily-vintage forecast features (HRRR, ERCOT STWPF/STPPF)
+already showed no lift. Loss shaping doesn't help. Models on the same
+features won't help. The 30-pp gap from 57.67% (best ML on val) to
+87.0% (floor) is the structural ceiling of what this problem framing,
+with the data we have, can deliver.
+
+**Final session-best ML on val:** 57.67 ± 2.84 pp of ceiling, q50 LGBM +
+EIA-930 + 2019+ truncated training + uniform-weighted loss + forecast-
+gate dispatch.
+
+**Next:** reveal the test set on the session-best setup and on the
+floor. One-shot, no further tuning.
+
+---
+
 ### 2026-04-25 — Final: +ERCOT wind+solar forecasts. Variance shrinks 3×, mean unchanged.
 
 **Config:** Same setup. Truncated training (2019+), forecast-gated
