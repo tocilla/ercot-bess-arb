@@ -7,24 +7,33 @@ and [results/test_reveal.csv](results/test_reveal.csv).
 
 ## Headline
 
-| Strategy | Revenue (test) | % of ceiling | $/kW-yr | Forecast MAE |
-|---|---:|---:|---:|---:|
-| do nothing | $0 | 0.00% | 0.0 | — |
-| fixed time of day (charge 3 AM, discharge 5 PM) | $3,103,800 | 15.42% | 15.5 | — |
-| persistence forecast (yesterday's prices) | $10,243,787 | 50.88% | 51.2 | $33.21 |
-| seasonal-naive forecast (4-week same-DOW median) | $10,595,535 | 52.63% | 52.9 | $27.13 |
-| **our ML ensemble (locked spec)** | **$15,529,439** | **77.13%** | **77.6** | **$12.27** |
-| natural-spread floor (oracle, knows realized prices) | $19,116,197 | 94.95% | 95.5 | — |
-| LP ceiling (perfect foresight, oracle dispatch) | $20,133,631 | 100.00% | 100.6 | — |
+**Deployable claim:** the locked-spec ML ensemble adds **+$5.29M revenue
+over the 2-year test window** vs. a persistence baseline — equivalent to
+**+$2.6M/year** of arbitrage value on a 100 MW battery, or **+26.3 pp** of
+ceiling captured over the most relevant deployable alternative.
 
-**Headline result:** the locked-spec ML ensemble captures **77.13% of the
-perfect-foresight revenue ceiling** on the held-out 2023-24 test window —
-**+26.25 pp over a persistence baseline** (the most relevant deployable
-comparison).
+**Academic-comparable framing:** the same ensemble captures **77.13%** of
+the perfect-foresight revenue ceiling. Within the academic literature's
+typical 50–70% range for 1-cycle/day arbitrage on daily-vintage features;
+below commercial production claims (Ascend Analytics: 90–95%) which use
+full-stack DAM + RTM + ancillary-services joint optimization with real-time
+data feeds — a deliberately wider scope than this project.
 
-In dollars on a 100 MW battery over the 2-year test window, that is
-**$5.29M more revenue than persistence**, or **+$2.6M/year of
-arbitrage value** that ML adds over a no-model strategy.
+| Strategy | Revenue | $/kW-yr | Δ vs persistence | % of ceiling | Forecast MAE |
+|---|---:|---:|---:|---:|---:|
+| do nothing | $0 | 0.0 | −$10.24M | 0.00% | — |
+| fixed time of day (charge 3 AM, discharge 5 PM) | $3,103,800 | 15.5 | −$7.14M | 15.42% | — |
+| persistence forecast (yesterday's prices) | $10,243,787 | 51.2 | (baseline) | 50.88% | $33.21 |
+| seasonal-naive forecast (4-week same-DOW median) | $10,595,535 | 52.9 | +$0.35M | 52.63% | $27.13 |
+| **our ML ensemble (locked spec)** | **$15,529,439** | **77.6** | **+$5.29M** | **77.13%** | **$12.27** |
+| natural-spread floor (*oracle, not deployable*) | $19,116,197 | 95.5 | +$8.87M | 94.95% | — |
+| LP ceiling (*perfect foresight, theoretical*) | $20,133,631 | 100.6 | +$9.89M | 100.00% | — |
+
+Why two framings: the "% of ceiling" number is what the BESS literature reports
+and how this project compares to published work. The "Δ vs persistence" number
+is what answers "should I deploy this?" — it isolates what the model contributes
+above what's already free in regular daily price structure (which persistence
+already captures by accident). Both are valid; report both.
 
 ## Stability across seeds
 

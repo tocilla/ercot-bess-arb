@@ -7,25 +7,27 @@ on a single-shot held-out test set.
 
 ## Headline result (test window, 2023-01-01 → 2024-12-31)
 
-| Strategy | Revenue | % of ceiling | $/kW-yr | Notes |
-|---|---:|---:|---:|---|
-| Do nothing | $0 | 0.00% | 0.0 | Battery sits, earns nothing from arbitrage |
-| Fixed time of day (3am→5pm) | $3.10M | 15.42% | 15.5 | No model, no forecast |
-| Persistence forecast | $10.24M | 50.88% | 51.2 | Yesterday's prices as today's forecast |
-| Seasonal-naive forecast | $10.60M | 52.63% | 52.9 | 4-week same-DOW median |
-| **This project's ML ensemble** | **$15.53M** | **77.13%** | **77.6** | LightGBM + EIA-930 features + forecast-gate |
-| Natural-spread floor (oracle) | $19.12M | 94.95% | 95.5 | Cheats — uses realized prices |
-| LP ceiling (perfect foresight) | $20.13M | 100.00% | 100.6 | Theoretical bound |
+**The deployable claim:** the model adds **+$2.6M/year** of arbitrage revenue
+on a 100 MW battery over a persistence baseline — **+26.3 pp** vs. the most
+relevant deployable comparison.
 
-**The model captures 77.13% of the perfect-foresight ceiling** — beating
-persistence by +26.25 pp, equivalent to **+$2.6M/year** of arbitrage revenue
-on a 100 MW battery over a deployable no-model baseline. Full results and
-context in [RESULTS.md](RESULTS.md).
+**The academic-comparable claim:** the model captures **77.13%** of the
+perfect-foresight revenue ceiling — within the literature's typical range
+of 50–70% for 1-cycle/day arb on daily-vintage features, below commercial
+production claims (Ascend Analytics: 90–95% with full-stack DAM+RTM+ancillary
+joint optimization — a wider problem than this).
 
-This puts the project **above the typical academic range** (50–70% on
-1-cycle/day arb with daily-vintage features) and **below commercial production
-claims** (Ascend Analytics: 90–95%, full-stack DAM+RTM+ancillary-services
-joint optimization with real-time data feeds — wider scope than this project).
+| Strategy | Revenue | $/kW-yr | Δ vs persistence | % of ceiling |
+|---|---:|---:|---:|---:|
+| Do nothing | $0 | 0.0 | −$10.24M | 0.00% |
+| Fixed time of day (3am→5pm) | $3.10M | 15.5 | −$7.14M | 15.42% |
+| Persistence forecast | $10.24M | 51.2 | (baseline) | 50.88% |
+| Seasonal-naive forecast | $10.60M | 52.9 | +$0.35M | 52.63% |
+| **This project's ML ensemble** | **$15.53M** | **77.6** | **+$5.29M** | **77.13%** |
+| Natural-spread floor (oracle, *not deployable*) | $19.12M | 95.5 | +$8.87M | 94.95% |
+| LP ceiling (perfect foresight, *theoretical bound*) | $20.13M | 100.6 | +$9.89M | 100.00% |
+
+Full results, regime breakdown, and industry context: [RESULTS.md](RESULTS.md).
 
 ## Project structure
 
