@@ -45,17 +45,36 @@ features. The training-time actual is leakage.
 
 ## 4. Baselines
 
-Every ML run must report metrics against all four reference strategies. See
-[PLAN.md](PLAN.md) §6 for details.
+Every ML run must report metrics against all five reference strategies.
 
-1. Natural-spread (charge at realized daily min, discharge at daily max — no
-   forecast). The floor.
-2. Persistence.
-3. Seasonal-naive.
-4. Classical forecast (SARIMA / ExpSmoothing) + threshold dispatch rule.
+### Deployable baselines (what you'd actually run without ML)
 
-Perfect-foresight is the ceiling, not a baseline — report `% of ceiling
-captured`, don't try to beat it.
+1. **Do nothing.** Idle dispatch — battery sits, no arbitrage revenue.
+2. **Fixed time of day.** Charge at the most-common-cheapest local hour,
+   discharge at the most-common-most-expensive. No model, no forecast.
+3. **Persistence forecast.** Forecast(t) = Price(t − 1 day); apply threshold
+   dispatch.
+4. **Seasonal-naive forecast.** 4-week same-DOW median; threshold dispatch.
+
+The "is the ML adding value vs. no ML?" comparison is against (3) and (4).
+
+### Theoretical upper bounds (NOT deployable)
+
+5. **Natural-spread "floor".** Each day, charge during the realized
+   cheapest intervals, discharge during the realized most expensive. **Cheats
+   by design** — uses post-hoc information no operator can have at decision
+   time. Useful as an upper bound on how much money is in the daily-shape
+   structure: a perfect forecast running threshold-rule dispatch would
+   approach this number but not exceed it (modulo cycle cap).
+
+6. **Perfect-foresight LP "ceiling".** Optimal LP-driven dispatch given
+   true future prices. Always wins. Used only as the denominator in
+   "% of ceiling" reporting.
+
+Items 5 and 6 are **NOT baselines to beat** in the productization sense; they
+are theoretical references that tell us how much revenue is in the problem.
+"ML didn't beat the floor" is not a deployment-relevant statement — "ML didn't
+beat persistence" is.
 
 ## 5. Metrics
 

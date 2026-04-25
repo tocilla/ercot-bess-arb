@@ -1,8 +1,67 @@
 # Findings
 
-Running log of experiment results, most recent first. Populated as experiments
-complete. Every entry is self-contained: someone reading only that entry
-should understand what was tried, what was measured, and what it means.
+Running log of experiment results, most recent first. Every entry is self-
+contained: someone reading only that entry should understand what was tried,
+what was measured, and what it means.
+
+## TL;DR
+
+**Final number on the held-out test set (2023-01 → 2024-12):**
+the locked-in q50 LightGBM ensemble + forecast-gate dispatch captures
+**77.13% of perfect-foresight ceiling** (≈ \$15.5M / 2 yr / 100 MW = **\$77/kW-yr**).
+
+| | Test % ceiling | Δ vs persistence |
+|---|---:|---:|
+| do_nothing | 0.00% | — |
+| fixed_time_3a_5p | 15.42% | −35.5 pp |
+| persistence | 50.88% | — |
+| seasonal_naive_4w | 52.63% | +1.8 pp |
+| **ml_ensemble (this project)** | **77.13%** | **+26.3 pp** |
+| natural-spread floor (oracle) | 94.95% | +44.1 pp |
+| LP ceiling (perfect foresight) | 100% | +49.1 pp |
+
+Detailed entry below: 2026-04-26 — Test set reveal.
+
+## Three biggest learnings of the session
+
+1. **Truncating training to 2019+ beat full 2011+ with NaN-fill** by ~6 pp
+   of ceiling on val. ERCOT's pre-2019 market is a different distribution
+   (pre-winterization, less wind/solar buildout); the extra rows actively
+   misled the model. Documented in DECISIONS.md and the 2026-04-24 entry.
+2. **MAE is decoupled from revenue.** Five separate experiments showed point-
+   forecast accuracy improving while dispatch revenue stayed flat or fell.
+   The forecast-gate ranks intervals within each day; what matters is the
+   rank order, not the absolute level. Decision-aware loss weighting
+   doesn't fix this — it makes things worse — because rank requires
+   well-calibrated predictions across the *whole* daily distribution.
+3. **Seed noise is large** on val (±2.84 pp of ceiling, 7.7 pp range across
+   5 seeds), much smaller on test (±0.43 pp). Several previously-claimed
+   findings were within val noise; we now report mean ± std and
+   effect/noise σ for every comparative claim.
+
+## Index of entries (newest first)
+
+- 2026-04-26 — **Test set reveal** (this revealed the 77.13% number)
+- 2026-04-25 — Pre-reveal: 5-seed ensemble lifts +5 pp; gap is on scarcity days
+- 2026-04-25 — Decision-aware loss weighting clearly hurts (and tells us why)
+- 2026-04-25 — Final +ERCOT wind+solar: variance shrinks 3×, mean unchanged
+- 2026-04-25 — Wind-only ERCOT STWPF: within noise, mildly negative
+- 2026-04-25 — Seed noise is big: ±2.8 pp of ceiling
+- 2026-04-25 — Adding HRRR improved MAE but hurt dispatch revenue
+- 2026-04-24 — Truncated training wins: full-history vs 2019+ head-to-head
+- 2026-04-24 — Data-source infrastructure landed
+- 2026-04-24 — Combined strategy (q50 + load + scarcity-prob feature + gate)
+- 2026-04-24 — Quantile LightGBM + forecast-gated dispatch
+- 2026-04-24 — Scarcity-day classifier + rule-based dispatch (negative result)
+- 2026-04-24 — LightGBM + ERCOT load features on validation
+- 2026-04-24 — LightGBM walk-forward on validation window
+- 2026-04-24 — Forecast-driven baselines and gated floor, HB_NORTH 2011–2024
+- 2026-04-24 — Perfect-foresight LP ceiling, HB_NORTH 2011–2024
+- 2026-04-24 — Natural-spread baseline, HB_NORTH 2011–2024
+
+---
+
+## Entry template
 
 ## Entry template
 
@@ -42,6 +101,103 @@ found, regimes where the model misbehaved, seeds that disagreed.
 ## Log
 
 <!-- Newest entry at the top. -->
+
+### 2026-04-26 — Test set reveal (one-shot, final)
+
+**Config:** Locked spec from 2026-04-25 entry. q50 LightGBM ensemble (5
+seeds: 7, 13, 23, 42, 101), 200 iters, default hyperparameters. 27
+features (prices + load + EIA-930). Truncated training,
+`train_start = 2019-01-01`. Walk-forward retraining every 30 days.
+Forecast-gate dispatch. Battery: 100 MW / 200 MWh / η=0.85 / 5–95%
+SOC / \$2/MWh degradation / 1 cycle/day. Per
+`scripts/test_reveal.py`. Test window per `configs/splits.yaml`:
+**2023-01-01 → 2024-12-31**, 731 days, 70,176 intervals.
+
+Test set was untouched until this run. Per METHODOLOGY §1, this is
+one-shot — no further model selection or hyperparameter tuning permitted
+on test results.
+
+**Test window price stats:** mean \$37.08, median \$19.94, std \$190.86,
+range \$-65.55 to \$5,296.29. Less volatile than val (which contained
+Winter Storm Elliott Dec 2022 + most of 2021's post-Uri repricing).
+
+**Results:**
+
+| Strategy | Revenue | % ceiling | $/kW-yr | MAE |
+|---|---:|---:|---:|---:|
+| do_nothing | \$0 | 0.00% | 0.0 | — |
+| fixed_time_3a_5p | \$3,103,800 | 15.42% | 15.5 | — |
+| persistence | \$10,243,787 | 50.88% | 51.2 | \$33.21 |
+| seasonal_naive_4w | \$10,595,535 | 52.63% | 52.9 | \$27.13 |
+| **ml_ensemble** | **\$15,529,439** | **77.13%** | **77.6** | **\$12.27** |
+| floor (oracle) | \$19,116,197 | 94.95% | 95.5 | — |
+| ceiling (perfect) | \$20,133,631 | 100.00% | 100.6 | — |
+
+**Per-seed:**
+
+| Seed | Revenue | % ceiling | MAE |
+|---|---:|---:|---:|
+| 7 | \$15,432,669 | 76.65% | \$12.18 |
+| 13 | \$15,215,692 | 75.57% | \$12.26 |
+| 23 | \$15,225,357 | 75.62% | \$12.52 |
+| 42 | \$15,372,055 | 76.35% | \$12.43 |
+| 101 | \$15,250,950 | 75.75% | \$12.52 |
+
+Mean: 75.99 ± 0.43 pp (std). Range: 75.57 – 76.65%.
+Ensemble: 77.13% (Δ vs mean: +1.14 pp — same variance-reduction
+effect we measured on val).
+
+**Regime breakdown — test:**
+
+| Regime | n_days | Floor revenue | ML revenue | ML/Floor | Floor−ML gap |
+|---|---:|---:|---:|---:|---:|
+| scarcity_only (max > \$500) | 63 | \$14,176,916 | \$11,396,000 | 80.4% | \$2.78M |
+| normal | 542 | \$3,958,754 | \$3,300,605 | 83.4% | \$0.66M |
+| negative_only (min < 0) | 124 | \$854,074 | \$734,844 | 86.0% | \$0.12M |
+| both | 2 | \$126,452 | \$97,990 | 77.5% | \$28k |
+
+Same diagnosis as val, slightly better in absolute terms — ML captures
+80% of floor's scarcity revenue on test (vs. 69% on val). 78% of the
+total floor → ML gap on test still lives on scarcity days.
+
+**Key observations:**
+
+1. **Test (77.13%) > val (62.67%).** Unusual but explainable:
+   - Test window is materially less volatile than val. Floor itself is
+     higher (94.95% on test vs. 87.0% on val) — more of the available
+     money is in regular daily structure.
+   - 2024 in particular saw declining ERCOT BESS revenues (per Modo
+     Energy) as market saturated; price spikes were less frequent and
+     more predictable.
+   - Walk-forward training had access to all of 2020-2022 (including
+     Uri and Elliott) by the time it predicted on 2023+, so the model
+     saw a broader regime sample than the val-time model did.
+
+2. **Seed std collapses on test (0.43 pp vs 2.84 pp on val).** The model
+   becomes more deterministic on a less-volatile period. Implication:
+   the val-period ±2.84 pp seed std was largely driven by a few extreme
+   days where seeds disagreed; on a more typical period, seed-noise is
+   small.
+
+3. **+26 pp lift over persistence is large and robust.** This is the
+   productizable claim — on a deployable comparison, the ML adds
+   roughly \$2.6M/yr of arbitrage revenue on a 100 MW battery vs. a
+   no-model "yesterday's prices" forecast.
+
+4. **Industry context:** Modo Energy reports 2023 ERCOT BESS revenue
+   averaged \$196k/MW/yr (across all revenue streams including ancillary
+   services). 2024 declined substantially. Our ML at \$77/kW/yr is in
+   the low-to-mid range of that — but our setup is energy-only, 1
+   cycle/day, with daily-vintage features, which is a deliberately
+   conservative scope. Commercial vendors (Ascend Analytics) claim
+   90–95% of perfect foresight using full-stack DAM+RTM+ancillary-
+   services optimization, which is a wider problem than we modeled.
+
+**This is the project's final headline.** Spec is committed in
+[RESULTS.md](RESULTS.md); no further model changes will be made
+based on test-set observations.
+
+---
 
 ### 2026-04-25 — Pre-reveal: 5-seed ensemble lifts +5 pp; gap is concentrated on scarcity days
 

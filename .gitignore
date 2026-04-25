@@ -23,6 +23,7 @@ data/interim/*
 # Results — experiment outputs, models, logs
 results/*
 !results/.gitkeep
+!results/test_reveal.csv
 *.pkl
 *.joblib
 *.parquet
