@@ -43,6 +43,89 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Final: +ERCOT wind+solar forecasts. Variance shrinks 3×, mean unchanged.
+
+**Config:** Same setup. Truncated training (2019+), forecast-gated
+dispatch, multi-seed (7, 13, 23, 42, 101). Now compares:
+- Baseline: prices + load + EIA-930 (27 features)
+- +ERCOT STWPF + STPPF: adds wind + solar day-ahead vintaged forecasts
+  (29 features)
+
+Backfill complete: 1,461 wind docs + 1,461 solar docs across 2019-01
+→ 2022-12 from ERCOT Public API at ~06 UTC publish.
+
+**Per-seed:**
+
+| Seed | Baseline % | +Wind+Solar % | Δ pp |
+|------|-----------:|--------------:|-----:|
+| 7    | 53.21      | 56.11         | +2.90 |
+| 13   | 57.95      | 54.66         | −3.29 |
+| 23   | 58.97      | 55.05         | −3.92 |
+| 42   | 57.31      | 56.93         | −0.38 |
+| 101  | 60.91      | 56.64         | −4.27 |
+
+**Mean ± std:**
+
+| Variant | Revenue | % ceiling | MAE |
+|---|---|---|---|
+| Baseline | \$11.12M ± \$548k | 57.67 ± **2.84 pp** | \$57.30 ± \$0.34 |
+| +Wind+Solar | \$10.77M ± **\$191k** | 55.88 ± **0.99 pp** | \$57.31 ± \$0.39 |
+
+**Delta: −1.79 pp of ceiling. Effect/noise: −0.94σ.** Within seed
+noise — not statistically distinguishable from baseline.
+
+**The interesting result is the variance, not the mean.**
+
+The +wind+solar arm has roughly **one-third** the seed-to-seed
+variance of baseline (\$191k vs \$548k revenue std; 0.99 vs 2.84 pp
+of ceiling). The features are doing real work — the model is using
+them, becomes more confident and seed-stable, point forecasts move
+slightly. But none of that translates into more revenue.
+
+This sharpens the diagnosis we've been circling all session:
+
+> Dispatch revenue gains require correctly *timing* the small number
+> of intervals on a small number of days that supply most of the
+> revenue. Daily-resolution exogenous forecasts (HRRR temperatures,
+> ERCOT STWPF/STPPF) help the model predict the *average* shape of
+> price more reliably, but average-day predictions barely matter.
+> The forecast-gate decides whether to cycle based on whole-day
+> expected spread; the threshold dispatch picks intervals based on
+> within-day price ordering. Neither benefits from "we expect average
+> wind tomorrow" being well-calibrated.
+
+**This is the closing experiment.** Per the plan documented yesterday,
+the decision rule was:
+
+> Δ < +2 pp or negative → forecasts don't help → go to Step 4 (stop
+> and write up).
+
+Δ = −1.79 pp, mean direction negative, 4/5 seeds individually negative.
+This branch is exhausted with the data we have available.
+
+**Final session-best ML result:**
+
+  q50 LGBM + EIA-930 features + 2019+ truncated training + forecast-
+  gate dispatch: **57.67 ± 2.84 pp of ceiling** on the validation
+  window, vs. the natural-spread floor's 87.0%.
+
+The remaining 30-pp gap to the floor (and 42-pp gap to the LP ceiling)
+is **not closable with the daily-resolution exogenous-forecast features
+we tested.** Closing it likely requires:
+
+1. Decision-focused / end-to-end training (loss = dispatch regret,
+   not MAE) — the only experiment we haven't tried that targets the
+   MAE-vs-revenue gap directly.
+2. Hourly-vintaged forecasts (24× more docs per endpoint) — possible
+   but expensive, and the daily version showed no signal so probability
+   of improvement is moderate.
+3. Real-time generator-outage / system-condition data — likely the
+   biggest gap, mostly requires market-participant credentials.
+
+**Test set: still untouched.** Per METHODOLOGY §1.
+
+---
+
 ### 2026-04-25 — Wind-only ERCOT STWPF as a feature: within noise, mildly negative
 
 **Config:** Same setup as session-best. Truncated training (2019+),
