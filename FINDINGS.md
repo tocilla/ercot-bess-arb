@@ -43,6 +43,83 @@ found, regimes where the model misbehaved, seeds that disagreed.
 
 <!-- Newest entry at the top. -->
 
+### 2026-04-25 — Pre-reveal: 5-seed ensemble lifts +5 pp; gap is concentrated on scarcity days
+
+**Two cheap analyses on the session-best ML setup before test reveal.**
+
+**(1) Seed ensemble.** Average the predictions from the 5 individual
+seed runs we already had, dispatch on the averaged prediction.
+
+| | Revenue | % ceiling |
+|---|---|---|
+| Individual seed mean | \$11.12M | 57.67 ± 2.84 pp |
+| **5-seed ensemble**  | **\$12.08M** | **62.67%** |
+| **Δ vs mean**        | **+\$963k** | **+5.00 pp** |
+
+A +5 pp lift, roughly 2σ above the seed-stability mean. This is variance
+reduction working as expected — averaging 5 stochastic predictors
+collapses some of the per-seed dispatch-timing noise that the gate
+amplifies. Costs nothing beyond the seed runs we'd already done.
+
+**This is the new session-best on val: 62.67% of ceiling.** vs. floor
+at 87.0%, gap = 24.3 pp.
+
+**(2) Regime breakdown of the ensemble.** Where does the ML gap to
+floor actually live?
+
+| Regime | n_days | Floor revenue | Ensemble revenue | ML/Floor |
+|---|---:|---:|---:|---:|
+| **scarcity_only** (max > \$500) | 86 | **\$11,437,351** | \$7,897,262 | **69.0%** |
+| normal | 588 | \$3,969,917 | \$3,109,396 | 78.3% |
+| negative_only | 112 | \$937,436 | \$754,441 | 80.5% |
+| both | 5 | \$421,955 | \$318,125 | 75.4% |
+
+Floor → ML revenue gap, by regime:
+
+| Regime | Floor − ML | % of total gap |
+|---|---:|---:|
+| scarcity_only | \$3,540,088 | **76.4%** |
+| normal | \$860,521 | 18.6% |
+| negative_only | \$182,995 | 4.0% |
+| both | \$103,830 | 2.2% |
+
+**76% of the entire floor-vs-ML gap lives on scarcity days alone.**
+On the 86 scarcity days (11% of val), the ensemble only captures 69%
+of the floor's revenue. On the other 705 days combined, it captures
+~78–80% — relatively close.
+
+This is the cleanest framing of the session's central finding:
+- The natural-spread floor's strength is its perfect intra-day timing
+  on the days where money is concentrated.
+- ML's weakness is *also* its intra-day timing on those days. It gets
+  the day's average shape roughly right (the 80% of normal days look
+  fine), but the rank-ordering of intervals on scarcity days — exactly
+  when prices spike from \$30 to \$3,000 within a few hours — is
+  systematically off.
+- This is consistent with every other diagnostic in the session: MAE
+  and central-tendency point forecasts are not the limiting factor;
+  intra-day rank prediction on tail days is.
+
+**What this DOESN'T tell us:** whether revealing the test set will
+generalize this or surprise us. The val window includes 86 scarcity
+days; the test window may have a different number, with different
+character (Winter Storm Elliott was Dec 2022, in val; the 2023 summer
+heat dome falls in test; etc.). The 62.67% number is committed to as
+the model spec; the test result will be whatever it is.
+
+**Decision:** ready to reveal test. Locked-in spec:
+- q50 LightGBM, 200 iters, default params
+- 27 features (prices + load + EIA-930 demand+gen-mix)
+- Truncated training, train_start = 2019-01-01
+- Walk-forward retraining every 30 days
+- 5 seeds (7, 13, 23, 42, 101), prediction averaging across seeds
+- Forecast-gate dispatch
+- 100 MW / 200 MWh / η=0.85 / 5–95% SOC / \$2/MWh degradation / 1 cycle/day
+
+Test window per `configs/splits.yaml`: 2023-01-01 → 2024-12-31.
+
+---
+
 ### 2026-04-25 — Decision-aware loss weighting: clearly hurts (and tells us why)
 
 **Config:** Same model, same features, same val window, multi-seed (5).
