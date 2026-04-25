@@ -1,50 +1,39 @@
-# Data gap — what we can get, what we can't, what it costs
+# Data gap — reference doc on the ERCOT BESS data landscape
 
-Living document. The session so far has been limited to `gridstatus.Ercot`
-(which wraps older MIS endpoints) and so under-estimated what's available.
-This document reconciles the gap and names concrete next sources.
+> **About this document.** This was originally a planning doc written
+> mid-project to inventory the data sources for ERCOT BESS arbitrage
+> research and grade their accessibility. After publishing the project,
+> I'm keeping it as a *reference* — useful for anyone doing similar work
+> who wants to know what's free, what needs an API key, and what's
+> genuinely paywalled. The current-status table below reflects what
+> was actually fetched and used. Forward-looking suggestions are
+> labeled. For the project's actual results see [RESULTS.md](RESULTS.md);
+> for the experiment log see [FINDINGS.md](FINDINGS.md).
 
-## Status update — 2026-04-24
+## Final status — what was used in the published model
 
-Infrastructure for every source except commercial ones is now in the
-repo. The fetchers are thin, cached, tested:
+| Source                                     | In the model? | Cached range | Notes |
+|--------------------------------------------|---------------|--------------|-------|
+| ERCOT RTM SPP (prices)                     | **yes** — primary signal | 2011–2024 | anonymous |
+| ERCOT historical actual load (by zone)     | **yes** — feature | 2011–2024 | anonymous |
+| EIA-930 demand + DA forecast + gen-by-fuel | **yes** — feature | 2019–2024 (ERCO availability) | needs free `EIA_API_KEY` |
+| ERCOT Public API wind STWPF (NP4-732-CD)   | tested, did not lift | 2019–2022, 1 doc/day | needs free ERCOT account + sub key |
+| ERCOT Public API solar STPPF (NP4-737-CD)  | tested, did not lift | 2019–2022, 1 doc/day | needs free ERCOT account + sub key |
+| HRRR weather forecasts (NOAA, AWS)         | tested, did not lift | 2019–2022, 1 cycle × 1 fxx/day | anonymous S3 |
+| FRED Henry Hub gas spot                    | fetched but not added as feature | 1997–present | anonymous |
+| ERCOT 7-day load forecast (NP3-560-CD)     | not fetched | — | needs free ERCOT credentials |
+| ERCOT outage capacity (NP3-233-CD)         | not fetched | — | needs free ERCOT credentials |
+| ERA5 weather reanalysis (Copernicus)       | not fetched | — | free with CDS key |
+| NOAA NDFD historical NWS forecasts         | not fetched | — | anonymous S3, GRIB2 |
+| GridStatus.io hosted API                   | not used | — | paid drop-in shortcut |
 
-| Source               | Module                       | Status                              |
-|----------------------|------------------------------|-------------------------------------|
-| ERCOT RTM SPP        | src/data/ercot.py            | live, 14 years cached               |
-| ERCOT historical load| src/data/ercot_load.py       | live, 14 years cached               |
-| FRED gas prices      | src/data/fred.py             | live, Henry Hub 1997+ cached        |
-| EIA-930              | src/data/eia930.py           | live, 2024 smoke-tested             |
-| HRRR weather         | src/data/hrrr.py             | live, single-cycle smoke-tested     |
-| ERCOT Public API     | src/data/ercot_api.py        | scaffolded, blocked on u/p          |
+`scripts/smoke_data_sources.py` re-verifies each fetcher end-to-end.
 
-Run `python scripts/smoke_data_sources.py` to re-verify them all.
-
-The only remaining credential gap is ERCOT account username+password for
-the Public API OAuth flow. Subscription key is already wired in `.env`.
-Once those two lines are filled, NP4-732-CD / NP4-737-CD / NP3-560-CD /
-NP3-233-CD all become available.
-
-## Status summary
-
-| Source                                     | Status for our project | Cost            | Effort     |
-|--------------------------------------------|------------------------|-----------------|------------|
-| ERCOT RTM SPP (prices)                     | ✅ have, 2011–2024     | free            | done       |
-| ERCOT historical actual load by zone       | ✅ have, 2011–2024     | free            | done       |
-| ERCOT load forecast (vintaged STLF)        | ❌ missing → **can get** via ERCOT Public API | free | 1–2 days |
-| ERCOT wind actual + forecast (vintaged STWPF) | ❌ missing → **can get** via ERCOT Public API | free | 1–2 days |
-| ERCOT solar actual + forecast (vintaged STPPF) | ❌ missing → **can get** via ERCOT Public API | free | 1–2 days |
-| ERCOT resource outage capacity             | ❌ missing → **can get** via ERCOT Public API | free | 1 day  |
-| EIA-930 hourly demand + forecast + gen-by-fuel | ❌ missing → **can get** via EIA API | free  | 0.5–1 day |
-| ERA5 weather reanalysis (historical actuals) | ❌ missing → **can get** via Copernicus CDS (free, key required) | free | 1 day |
-| **HRRR historical weather *forecasts* (as-of)** | ❌ missing → **can get** from AWS S3 (anonymous, NO KEY) | free | 1 day |
-| NOAA NDFD historical weather *forecasts*   | ✅ on AWS S3 (anonymous, NO KEY) — GRIB2 parse | free | 2 days |
-| Natural gas prices (Henry Hub, Waha daily) | ❌ missing → **can get** via FRED CSV (NO KEY) or EIA API | free | 0.5 day |
-| GridStatus.io hosted API (backfilled)      | ⚠️ easier drop-in for most of the above       | free tier + paid | 0.5 day |
-
-**The punchline: most of what we thought was missing is actually free with
-signup.** The gate was not the data — it was which endpoints gridstatus
-wrapped.
+**The take-away:** for ERCOT BESS-arb research, you can build the entire
+data side of a project like this with free credentials only — ERCOT
+Public API + EIA + Copernicus + NOAA S3 cover almost everything an
+industry-grade research model needs except generator-level outage data
+and proprietary weather ensembles.
 
 ---
 
@@ -245,22 +234,37 @@ Ordered by expected revenue-lift-per-engineer-day:
    for measuring HRRR's forecast error as a feature, not for
    replacing HRRR. ~1 day.
 
-## Expected ceiling if we executed all of #1–#6
+## What we tested and learned (after publishing)
 
-We don't actually know. The session's working estimate, based on the
-literature: with a vintaged day-ahead forecast of load + wind + solar +
-temperature, well-tuned ML models report 65–80% of perfect-foresight
-revenue on ERCOT BESS arbitrage with 1 cycle/day. That would close most
-of the gap between our current 53% and the 87% floor — possibly even
-beat the floor by explicitly avoiding cycles on unprofitable days a
-perfect-timing oracle would also avoid.
+The phase-2 ranking above was a forward-looking plan. After running
+the experiments documented in [FINDINGS.md](FINDINGS.md):
 
-This remains an open empirical question and is the natural scope of the
-next project phase.
+- **EIA-930 demand + gen-mix:** added as features. Lift on val, kept in
+  the final spec. Final test: 77.13% of perfect-foresight ceiling.
+- **ERCOT STWPF + STPPF (wind+solar forecasts):** measured neutral on
+  multi-seed val (Δ −1.79 pp, within −0.94σ). Variance shrunk 3× but
+  mean unchanged. Did not include in final spec.
+- **HRRR weather (1 cycle/day, F+6):** measured −8.5 pp single-seed,
+  later shown to be within seed noise (±2.84 pp). Not in final spec.
+- **Decision-aware loss weighting:** every variant lost decisively to
+  uniform weights (mechanism in FINDINGS — dispatch ranks intervals,
+  weighted loss distorts rank).
 
-## Open items for this document
+So the headline answer to "would more daily-vintage exogenous data
+close the gap to floor (95% on test)?" is **probably not** — daily
+aggregate forecasts don't help a rank-based forecast-gate dispatch.
+The remaining ~18 pp of headroom likely requires **hourly-vintage**
+forecasts, generator-level outage data, or a fundamentally different
+dispatch formulation (decision-focused learning would also need to
+solve the rank-distortion problem the weighted-loss experiment
+exposed).
 
-- [ ] Confirm ERCOT API rate limits + historical cap.
-- [ ] Confirm EIA-930 fuel-mix start date for ERCOT specifically.
-- [ ] Confirm NDFD availability for our validation window 2020-11+.
-- [ ] Scope a concrete DATA_BACKFILL milestone in [PLAN.md](PLAN.md).
+## Open items if extending the project
+
+- [ ] Hourly-vintage ERCOT forecasts (24× more docs per endpoint)
+- [ ] NP3-560-CD load forecast — last untested vintaged ERCOT signal
+- [ ] NP3-233-CD outage capacity — only data source we tested that
+      could plausibly encode tail-risk in a way wind/solar don't
+- [ ] HRRR with multiple fxx values per day — addresses the
+      "daily aggregate is too coarse" concern
+- [ ] ERA5 actuals as calibration / auxiliary feature
