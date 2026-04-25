@@ -1,39 +1,69 @@
-# Data gap — reference doc on the ERCOT BESS data landscape
+# Data landscape — what we tried, decided against, missed
 
-> **About this document.** This was originally a planning doc written
-> mid-project to inventory the data sources for ERCOT BESS arbitrage
-> research and grade their accessibility. After publishing the project,
-> I'm keeping it as a *reference* — useful for anyone doing similar work
-> who wants to know what's free, what needs an API key, and what's
-> genuinely paywalled. The current-status table below reflects what
-> was actually fetched and used. Forward-looking suggestions are
-> labeled. For the project's actual results see [RESULTS.md](RESULTS.md);
-> for the experiment log see [FINDINGS.md](FINDINGS.md).
+> **About this document.** Originally a planning doc written mid-project
+> to inventory data sources. Now a post-project reference — what was
+> tried, what was deliberately skipped, and what we genuinely missed.
+> Useful for anyone doing similar BESS-arb research who wants to know
+> what's free, what needs an API key, and what's genuinely paywalled.
+> For the project's results see [RESULTS.md](RESULTS.md); for the
+> experiment log see [FINDINGS.md](FINDINGS.md).
 
-## Final status — what was used in the published model
+## What we tried (tested in experiments)
 
-| Source                                     | In the model? | Cached range | Notes |
-|--------------------------------------------|---------------|--------------|-------|
-| ERCOT RTM SPP (prices)                     | **yes** — primary signal | 2011–2024 | anonymous |
-| ERCOT historical actual load (by zone)     | **yes** — feature | 2011–2024 | anonymous |
-| EIA-930 demand + DA forecast + gen-by-fuel | **yes** — feature | 2019–2024 (ERCO availability) | needs free `EIA_API_KEY` |
-| ERCOT Public API wind STWPF (NP4-732-CD)   | tested, did not lift | 2019–2022, 1 doc/day | needs free ERCOT account + sub key |
-| ERCOT Public API solar STPPF (NP4-737-CD)  | tested, did not lift | 2019–2022, 1 doc/day | needs free ERCOT account + sub key |
-| HRRR weather forecasts (NOAA, AWS)         | tested, did not lift | 2019–2022, 1 cycle × 1 fxx/day | anonymous S3 |
-| FRED Henry Hub gas spot                    | fetched but not added as feature | 1997–present | anonymous |
-| ERCOT 7-day load forecast (NP3-560-CD)     | not fetched | — | needs free ERCOT credentials |
-| ERCOT outage capacity (NP3-233-CD)         | not fetched | — | needs free ERCOT credentials |
-| ERA5 weather reanalysis (Copernicus)       | not fetched | — | free with CDS key |
-| NOAA NDFD historical NWS forecasts         | not fetched | — | anonymous S3, GRIB2 |
-| GridStatus.io hosted API                   | not used | — | paid drop-in shortcut |
+| Source | In final spec? | What we observed |
+|---|---|---|
+| ERCOT RTM SPP (prices) | **yes** — primary target | 2011–2024 cached; baseline of the whole problem |
+| ERCOT historical load by zone | **yes** — feature | 2011–2024 cached |
+| EIA-930 demand actual + DA forecast + gen-by-fuel | **yes** — feature | 2019–2024 cached; included in final 27-feature spec |
+| ERCOT Public API wind STWPF (NP4-732-CD) | **no** — tested, neutral | Δ −1.79 pp on val, within noise (−0.94σ). Variance shrunk 3× but mean unchanged. |
+| ERCOT Public API solar STPPF (NP4-737-CD) | **no** — tested, neutral | Same as wind |
+| HRRR weather forecasts (1 cycle × 1 fxx/day) | **no** — tested, neutral | First-look −8.5 pp single-seed, later shown to be within seed noise (±2.84 pp on val) |
+| Decision-aware loss weighting (3 schemes) | **no** — tested, hurt | Every variant lost decisively to uniform weights. Mechanistic reason: dispatch ranks intervals, weighted loss distorts rank. |
 
-`scripts/smoke_data_sources.py` re-verifies each fetcher end-to-end.
+Per the documented decision rule, exits from "tested-and-rejected" entries
+were taken when the lift was below 2σ of seed noise.
 
-**The take-away:** for ERCOT BESS-arb research, you can build the entire
-data side of a project like this with free credentials only — ERCOT
-Public API + EIA + Copernicus + NOAA S3 cover almost everything an
-industry-grade research model needs except generator-level outage data
-and proprietary weather ensembles.
+## What we deliberately skipped (and why)
+
+| Source | Why skipped |
+|---|---|
+| ERCOT 7-day load forecast (NP3-560-CD) | Pattern-similar to wind/solar STWPF/STPPF — daily-vintage, smooth quantity, broadcast across 96 intraday intervals. Wind/solar's negative result strongly suggested this would behave the same. |
+| ERA5 weather reanalysis | Reanalysis (not vintaged) → has to be used as a lagged proxy, similar information to what HRRR already gave us. |
+| NOAA NDFD historical forecasts | Heavier integration (GRIB2 + AWS). Pattern-similar to HRRR which we already tested. |
+| Hourly-vintage ERCOT forecasts (24× more docs) | Cost is high (~hours of API time), and the daily version showed nothing — prior was that hourly wouldn't unlock a different result. |
+| FRED Henry Hub natural gas as a feature | Slow-moving signal, unlikely to drive intraday rank. Fetched but never integrated. |
+
+These were all skipped because the documented decision rule said
+"if the first daily-vintage forecast feature doesn't help → exit the
+data-gathering branch and write up." The rule treated all remaining
+items as one bucket, which was a coarse simplification.
+
+## What we genuinely missed (worth trying first if extending)
+
+**ERCOT outage capacity (NP3-233-CD).** This is the one we should have
+tried but didn't. Reasoning:
+
+- **Different signal type.** Generator outage events are *discrete*, not
+  smooth-forecast. Our other rejected features were all smooth daily
+  forecasts (wind/solar/temperature). The mechanistic reason daily
+  forecasts didn't help — they distort rank-ordering when broadcast
+  across intervals — doesn't necessarily apply to a discrete outage
+  signal.
+- **Direct tail-risk encoding.** Outages are a primary cause of scarcity
+  events, which drive 76% of the floor → ML revenue gap. Of all
+  untested features, this is the one with the highest plausible
+  probability of helping.
+- **Free with the same ERCOT credentials we already have.**
+- **Why we missed it:** the decision rule was framed at the level of
+  "data-gathering branch" rather than "this specific signal type."
+  When wind/solar didn't help, the rule said exit; it didn't carve out
+  outage capacity as worth a separate test. With hindsight, that's a
+  bucket the rule should have separated.
+
+**If you're picking up this project, fetch NP3-233-CD first.**
+
+The other un-fetched items (load forecast, ERA5, NDFD) are pattern-
+similar to things we tested and are unlikely to change the picture.
 
 ---
 
