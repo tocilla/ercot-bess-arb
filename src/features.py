@@ -45,6 +45,7 @@ def build_features(
     hrrr: pd.DataFrame | None = None,
     ercot_wind_forecasts: pd.DataFrame | None = None,
     ercot_solar_forecasts: pd.DataFrame | None = None,
+    ercot_outage: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build a feature DataFrame with lag + rolling + calendar columns.
 
@@ -109,16 +110,49 @@ def build_features(
             ercot_wind_forecasts, ercot_solar_forecasts,
         )
 
+    if ercot_outage is not None and not ercot_outage.empty:
+        df = _add_ercot_outage_features(df, prices.index, tz or "UTC", ercot_outage)
+
+    return df
+
+
+def _add_ercot_outage_features(
+    df: pd.DataFrame,
+    target_index: pd.DatetimeIndex,
+    tz: str,
+    outage: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add ERCOT NP3-233-CD outage-capacity features.
+
+    Unlike wind/solar STWPF/STPPF, this is a near-term outage *forecast*
+    of MW currently scheduled out of service. Higher = less available
+    capacity = higher scarcity risk. Discrete-event signal — different
+    information class than smooth daily generation forecasts.
+
+    Adds:
+      ercot_outage_total_mw        — sum of all outage categories
+      ercot_outage_irr_mw          — intermittent-resource outages
+    """
+    df["ercot_outage_total_mw"] = _lookup_latest_forecast_by_valid(
+        outage, "TotalResourceMW", tz, target_index
+    )
+    if "TotalIRRMW" in outage.columns:
+        df["ercot_outage_irr_mw"] = _lookup_latest_forecast_by_valid(
+            outage, "TotalIRRMW", tz, target_index
+        )
     return df
 
 
 def _parse_delivery_ts(df: pd.DataFrame, tz: str) -> pd.DatetimeIndex:
-    """ERCOT reports use DELIVERY_DATE (local date, MM/DD/YYYY) + HOUR_ENDING
-    (1..24 or 25). Interval start = hour - 1 in local time. Handle DST via
-    DSTFlag when present.
+    """ERCOT reports use a date column + HOUR_ENDING (1..24 or 25).
+    Interval start = hour - 1 in local time. Different reports use
+    different column names: NP4-732/737 use 'DELIVERY_DATE',
+    NP3-233 uses 'Date'. Handle DST via DSTFlag when present.
     """
-    date = pd.to_datetime(df["DELIVERY_DATE"], format="%m/%d/%Y")
-    hour_start = df["HOUR_ENDING"].astype(int) - 1
+    date_col = "DELIVERY_DATE" if "DELIVERY_DATE" in df.columns else "Date"
+    hour_col = "HOUR_ENDING" if "HOUR_ENDING" in df.columns else "HourEnding"
+    date = pd.to_datetime(df[date_col], format="%m/%d/%Y")
+    hour_start = df[hour_col].astype(int) - 1
     local = date + pd.to_timedelta(hour_start, unit="h")
     # DST: ERCOT uses DSTFlag ('Y'/'N') on the repeated fall-back hour.
     if "DSTFlag" in df.columns:
@@ -127,7 +161,10 @@ def _parse_delivery_ts(df: pd.DataFrame, tz: str) -> pd.DatetimeIndex:
         ambiguous = (df["DSTFlag"].astype(str).str.upper() == "Y")
         return local.dt.tz_localize(tz, ambiguous=ambiguous.to_numpy(),
                                     nonexistent="shift_forward").dt.tz_convert("UTC")
-    return local.dt.tz_localize(tz, ambiguous="infer",
+    # No DSTFlag column — assume standard time (post fall-back) on the
+    # ambiguous hour each November. Off by 1h on at most one timestamp/year;
+    # the model isn't sensitive to this.
+    return local.dt.tz_localize(tz, ambiguous=False,
                                 nonexistent="shift_forward").dt.tz_convert("UTC")
 
 

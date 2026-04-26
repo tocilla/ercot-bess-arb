@@ -41,6 +41,7 @@ Detailed entry below: 2026-04-26 — Test set reveal.
 
 ## Index of entries (newest first)
 
+- 2026-04-26 — Post-hoc curiosity: ERCOT outage capacity (NP3-233-CD) — also negative
 - 2026-04-26 — **Test set reveal** (this revealed the 77.13% number)
 - 2026-04-25 — Pre-reveal: 5-seed ensemble lifts +5 pp; gap is on scarcity days
 - 2026-04-25 — Decision-aware loss weighting clearly hurts (and tells us why)
@@ -101,6 +102,67 @@ found, regimes where the model misbehaved, seeds that disagreed.
 ## Log
 
 <!-- Newest entry at the top. -->
+
+### 2026-04-26 — Post-hoc curiosity: ERCOT outage capacity (NP3-233-CD)
+
+**⚠️ Post-hoc, val window only.** The test set is BURNED per
+METHODOLOGY §1; this experiment does not update the published
+77.13% headline. Logged for the record because the previous
+DATA_GAP entry flagged this as the one untested signal that
+might behave differently.
+
+**Config:** Same locked spec, multi-seed (5). Added two features
+to the 27-feature baseline:
+- `ercot_outage_total_mw` — total scheduled-outage MW
+- `ercot_outage_irr_mw` — intermittent-resource outage MW
+
+Source: ERCOT NP3-233-CD, 1 doc/day at ~06 UTC publish, 2019–2022
+backfill (1,461 docs). Latest-publish-before-target lookup with
+24h ffill, same publish-time leakage guard as wind/solar.
+
+**Results (val window):**
+
+| Variant | mean % ceiling | std | mean MAE |
+|---|---:|---:|---:|
+| Baseline (EIA only) | **57.67** | 2.84 pp | \$57.30 |
+| + outage capacity | 55.34 | 3.09 pp | \$59.45 |
+| Δ | **−2.33 pp** | — | +\$2.15 |
+
+Effect/noise: **−0.78σ.** Within seed noise but 4/5 seeds individually
+went down (only seed 7 ticked up). MAE got slightly worse.
+
+**The hypothesis didn't pan out.** I had flagged outage capacity as
+the one untested signal that might behave differently because it
+encodes discrete generator-trip events, not smooth forecasts. The
+mechanism that explains why daily-vintage smooth forecasts don't
+help (rank-distortion under broadcast-across-day) seemed like it
+might not apply to discrete signals. Empirically, the result is the
+same null pattern.
+
+**Why it likely failed even though outages drive scarcity:**
+
+Outages do drive scarcity, but a daily aggregate "10 GW out today"
+number broadcasted across 96 intraday intervals doesn't tell the
+forecast-gate which *hour* will spike. The dispatch ranks intervals
+within the day; the absolute outage level shifts the model's
+predicted price level uniformly, leaving the rank order untouched.
+Same failure mode as the other daily-vintage features.
+
+**This strengthens the central session diagnosis** — the gap from
+ML to floor isn't closable with *any* daily-vintage exogenous
+feature in this dispatch framing. Real lift would require:
+- **Hourly-vintage** outage updates (an operator gets these in
+  near-real-time during a trip)
+- A dispatch formulation that uses *level* signals, not just rank
+  (e.g. continuous bid curves into DA / RT markets)
+
+Both are scope-shifts beyond the project's research-focused setup.
+
+**Test set status: still untouched.** The published 77.13% number
+remains the project's headline. This entry documents a post-hoc
+val-only curiosity check; no model selection on test.
+
+---
 
 ### 2026-04-26 — Test set reveal (one-shot, final)
 

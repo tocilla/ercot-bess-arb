@@ -38,32 +38,36 @@ These were all skipped because the documented decision rule said
 data-gathering branch and write up." The rule treated all remaining
 items as one bucket, which was a coarse simplification.
 
-## What we genuinely missed (worth trying first if extending)
+## What we genuinely missed (and have since tested post-hoc)
 
-**ERCOT outage capacity (NP3-233-CD).** This is the one we should have
-tried but didn't. Reasoning:
+**ERCOT outage capacity (NP3-233-CD).** Originally flagged as the one
+untested signal that might behave differently because outages are
+*discrete events* rather than smooth daily forecasts. Tested
+post-hoc on 2026-04-26 (val window only — see FINDINGS):
 
-- **Different signal type.** Generator outage events are *discrete*, not
-  smooth-forecast. Our other rejected features were all smooth daily
-  forecasts (wind/solar/temperature). The mechanistic reason daily
-  forecasts didn't help — they distort rank-ordering when broadcast
-  across intervals — doesn't necessarily apply to a discrete outage
-  signal.
-- **Direct tail-risk encoding.** Outages are a primary cause of scarcity
-  events, which drive 76% of the floor → ML revenue gap. Of all
-  untested features, this is the one with the highest plausible
-  probability of helping.
-- **Free with the same ERCOT credentials we already have.**
-- **Why we missed it:** the decision rule was framed at the level of
-  "data-gathering branch" rather than "this specific signal type."
-  When wind/solar didn't help, the rule said exit; it didn't carve out
-  outage capacity as worth a separate test. With hindsight, that's a
-  bucket the rule should have separated.
+  baseline (EIA only):  57.67 ± 2.84 pp of ceiling
+  + outage capacity:    55.34 ± 3.09 pp of ceiling
+  Δ:                    −2.33 pp at −0.78σ
 
-**If you're picking up this project, fetch NP3-233-CD first.**
+**Within seed noise but trending negative — same pattern as wind/solar/HRRR.**
+The "different signal type" hypothesis didn't pan out. Mechanism: the
+forecast-gate dispatch ranks intervals within each day; broadcasting a
+daily aggregate outage value across 96 intraday intervals shifts the
+predicted level uniformly without changing rank order. Same failure
+mode as smooth forecasts.
 
-The other un-fetched items (load forecast, ERA5, NDFD) are pattern-
-similar to things we tested and are unlikely to change the picture.
+This **strengthens** the central diagnosis: daily-vintage exogenous
+data fundamentally doesn't help rank-based dispatch in this framing,
+regardless of signal type. Closing the residual gap to floor would
+require **hourly-vintage** feeds and/or a dispatch formulation that
+uses level signals (e.g. continuous bid curves into DA/RT markets) —
+both scope-shifts beyond this project.
+
+**For a future extender**, the still-untested but-pattern-similar
+items (load forecast NP3-560-CD, ERA5, NDFD) are unlikely to change
+the picture. The actionable path forward is fetching hourly-vintage
+forecasts (24× more docs each) or moving to a multi-market dispatch
+framing — not more daily-aggregate features.
 
 ---
 
