@@ -35,12 +35,10 @@ Full results, regime breakdown, and industry context: [RESULTS.md](RESULTS.md).
 .
 ├── PLAN.md          # project charter (what / why / how)
 ├── METHODOLOGY.md   # evaluation protocol — splits, walk-forward, metrics
-├── DATA.md          # data sources, as-of semantics, schema
-├── DATA_GAP.md      # what data we have, what's still available, what's hard
+├── DATA.md          # data sources, as-of semantics, schema, references
 ├── FINDINGS.md      # running log of every experiment with TL;DR at top
 ├── DECISIONS.md     # architecture / scope decisions with rationale
 ├── RESULTS.md       # final test-set numbers
-├── IN_PROGRESS.md   # paused backfills (resume commands)
 ├── src/             # battery sim, dispatch, baselines, features, models
 ├── scripts/         # entry points (data fetch, experiments, reveal)
 ├── tests/           # 31 unit tests incl. anti-leakage tests
