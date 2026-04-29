@@ -29,6 +29,26 @@ data feeds — a deliberately wider scope than this project.
 | natural-spread floor (*oracle, not deployable*) | $19,116,197 | 95.5 | +$8.87M | 94.95% | — |
 | LP ceiling (*perfect foresight, theoretical*) | $20,133,631 | 100.6 | +$9.89M | 100.00% | — |
 
+> **Why the bottom two rows aren't strategies.** The natural-spread floor
+> and the LP ceiling both **cheat** by using realized prices that wouldn't
+> have been knowable at decision time:
+>
+> - The **natural-spread floor** sorts each day's *realized* LMPs after the
+>   fact, charges during the cheapest intervals, discharges during the most
+>   expensive. Pure post-hoc oracle on the daily price ranks. A real
+>   forecaster running threshold-rule dispatch can approach this number
+>   but mathematically cannot exceed it.
+> - The **LP ceiling** solves a perfect-foresight linear program given the
+>   full sequence of true future prices. It's the absolute mathematical
+>   maximum a battery with our spec could earn — by construction, no
+>   forecasting strategy can ever beat it.
+>
+> Both are **benchmarks**, not algorithms. They tell us how big the
+> arbitrage pie is (ceiling) and how much of it is theoretically reachable
+> with perfect knowledge of the daily shape (floor). The only deployable
+> comparison in this table is **persistence** — that's why the headline
+> `Δ vs persistence` claim is measured against it.
+
 Why two framings: the "% of ceiling" number is what the BESS literature reports
 and how this project compares to published work. The "Δ vs persistence" number
 is what answers "should I deploy this?" — it isolates what the model contributes

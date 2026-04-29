@@ -27,6 +27,16 @@ joint optimization — a wider problem than this).
 | Natural-spread floor (oracle, *not deployable*) | $19.12M | 95.5 | +$8.87M | 94.95% |
 | LP ceiling (perfect foresight, *theoretical bound*) | $20.13M | 100.6 | +$9.89M | 100.00% |
 
+> **Note on floor and ceiling.** The bottom two rows are **not strategies you
+> can run** — they cheat by using realized prices that wouldn't have been
+> knowable at decision time. The natural-spread floor sorts each day's
+> *realized* prices and picks the cheapest/most-expensive intervals; the LP
+> ceiling solves a perfect-foresight optimization given every future price.
+> Both are *benchmarks* that bound how big the arbitrage pie is and how
+> much of it is theoretically reachable. The deployable comparison is
+> persistence — that's why the headline `Δ vs persistence` claim is
+> measured against it, not against the floor or the ceiling.
+
 Full results, regime breakdown, and industry context: [RESULTS.md](RESULTS.md).
 
 ## Project structure
